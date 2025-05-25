@@ -1,0 +1,178 @@
+/**
+ * SerpAPI client for scraping Google Jobs results
+ * Searches for specific job titles and saves results to the database
+ */
+
+const axios = require('axios');
+const config = require('../../config/config');
+const db = require('../db');
+const logger = require('../utils/logger');
+
+class SerpApiClient {
+  constructor() {
+    this.apiKey = config.apiKeys.serpApi;
+    this.baseUrl = 'https://serpapi.com/search';
+    this.jobTitles = config.jobTitles;
+  }
+
+  /**
+   * Validate that the API key is set
+   * @throws {Error} If API key is not set
+   */
+  validateApiKey() {
+    if (!this.apiKey) {
+      throw new Error('SerpAPI key is not set. Please set SERPAPI_KEY in your environment variables.');
+    }
+  }
+
+  /**
+   * Search for jobs using the SerpAPI Google Jobs endpoint
+   * @param {string} jobTitle - Job title to search for
+   * @param {number} location - Location to search in
+   * @param {number} page - Page number (0-indexed)
+   * @returns {Promise<Object>} SerpAPI response
+   */
+  async searchJobs(jobTitle, location = 'United States', page = 0) {
+    this.validateApiKey();
+
+    try {
+      logger.info(`Searching for "${jobTitle}" jobs in ${location}, page ${page}`);
+      
+      const params = {
+        engine: 'google_jobs',
+        q: jobTitle,
+        location: location,
+        hl: 'en',
+        api_key: this.apiKey,
+        start: page * 10 // SerpAPI uses 10 jobs per page
+      };
+
+      const response = await axios.get(this.baseUrl, { params });
+      
+      if (response.status !== 200) {
+        throw new Error(`SerpAPI returned status code ${response.status}`);
+      }
+
+      logger.info(`Found ${response.data.jobs_results?.length || 0} jobs for "${jobTitle}"`);
+      return response.data;
+    } catch (error) {
+      logger.error('Error searching for jobs with SerpAPI', {
+        jobTitle,
+        location,
+        page,
+        error: error.message
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Process job results and save to database
+   * @param {Array} jobsResults - Array of job results from SerpAPI
+   * @param {string} source - Source of the jobs data
+   * @returns {Promise<Array>} Array of inserted jobs
+   */
+  async processJobResults(jobsResults, source = 'serpapi') {
+    if (!jobsResults || !Array.isArray(jobsResults)) {
+      logger.warn('No job results to process');
+      return [];
+    }
+
+    const insertedJobs = [];
+
+    for (const job of jobsResults) {
+      try {
+        // Check if job already exists in database by URL
+        const exists = await db.jobExists(job.link);
+        if (exists) {
+          logger.debug(`Job already exists in database: ${job.title} at ${job.company_name}`);
+          continue;
+        }
+
+        // Extract salary range if available
+        let salaryRange = null;
+        if (job.detected_extensions && job.detected_extensions.salary) {
+          salaryRange = job.detected_extensions.salary;
+        }
+
+        // Prepare job data for database
+        const jobData = {
+          title: job.title,
+          company: job.company_name,
+          location: job.location,
+          description: job.description,
+          salary_range: salaryRange,
+          job_url: job.link,
+          contact_email: null, // Will be filled by enrichment service
+          contact_name: null, // Will be filled by enrichment service
+          company_domain: null, // Will be filled by enrichment service
+          raw_json: JSON.stringify(job),
+          source: source
+        };
+
+        // Insert job into database
+        const insertedJob = await db.insertJob(jobData);
+        insertedJobs.push(insertedJob);
+        
+        logger.info(`Inserted job: ${insertedJob.title} at ${insertedJob.company}`);
+      } catch (error) {
+        logger.error('Error processing job', {
+          job: job.title,
+          company: job.company_name,
+          error: error.message
+        });
+        // Continue with next job
+        continue;
+      }
+    }
+
+    return insertedJobs;
+  }
+
+  /**
+   * Scrape jobs for all configured job titles
+   * @param {number} pages - Number of pages to scrape per job title
+   * @returns {Promise<Object>} Results summary
+   */
+  async scrapeAllJobs(pages = 3) {
+    this.validateApiKey();
+    
+    const results = {
+      total: 0,
+      byTitle: {}
+    };
+
+    for (const jobTitle of this.jobTitles) {
+      try {
+        results.byTitle[jobTitle] = 0;
+        
+        // Scrape multiple pages for each job title
+        for (let page = 0; page < pages; page++) {
+          const data = await this.searchJobs(jobTitle, 'United States', page);
+          
+          if (!data.jobs_results || !data.jobs_results.length) {
+            logger.info(`No more results for "${jobTitle}" on page ${page}`);
+            break;
+          }
+          
+          const insertedJobs = await this.processJobResults(data.jobs_results);
+          
+          results.byTitle[jobTitle] += insertedJobs.length;
+          results.total += insertedJobs.length;
+          
+          // Add some delay between requests to avoid rate limiting
+          await new Promise(resolve => setTimeout(resolve, config.scraping.requestDelay));
+        }
+        
+        logger.info(`Completed scraping for "${jobTitle}". Added ${results.byTitle[jobTitle]} new jobs.`);
+      } catch (error) {
+        logger.error(`Error scraping jobs for "${jobTitle}"`, { error: error.message });
+      }
+    }
+    
+    logger.info(`Completed scraping all job titles. Added ${results.total} new jobs in total.`);
+    return results;
+  }
+}
+
+module.exports = new SerpApiClient();
