@@ -4,6 +4,7 @@
  */
 
 const axios = require('axios');
+const { withRetries } = require('../utils/custom-retry');
 // const config = require('../../config/config'); // Remove
 // const logger = require('../utils/logger');   // Remove
 
@@ -34,27 +35,49 @@ class ClearbitService {
   async enrichCompany(domain) {
     this.validateApiKey();
 
+    const apiCall = () => axios.get(`${this.baseUrl}/companies/find`, {
+      params: { domain: domain },
+      headers: { Authorization: `Bearer ${this.apiKey}` }
+    });
+
+    // Construct retry config from global config
+    const serviceRetryOptions = { 
+      ...this.config.retryConfig.default, 
+      ...(this.config.retryConfig.services.clearbit || {}) 
+    };
+
+    const retryConfigForWithRetries = {
+      retries: serviceRetryOptions.retries,
+      initialDelay: serviceRetryOptions.initialDelayMs,
+      maxDelay: serviceRetryOptions.maxDelayMs,
+      backoffFactor: serviceRetryOptions.backoffFactor,
+      jitter: serviceRetryOptions.jitter
+      // shouldRetry can be added here if defined in serviceRetryOptions.shouldRetry (e.g., as a function)
+    };
+
     try {
       this.logger.info(`Enriching company data for domain: ${domain} using Clearbit`);
       
-      const response = await axios.get(`${this.baseUrl}/companies/find`, {
-        params: {
-          domain: domain
-        },
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`
-        }
-      });
+      const response = await withRetries(apiCall, retryConfigForWithRetries);
       
-      if (response.status !== 200) {
-        this.logger.error(`Clearbit API returned status code ${response.status} for domain ${domain}`);
-        throw new Error(`Clearbit API returned status code ${response.status}`);
+      // withRetries should ideally throw an error for non-2xx responses that weren't successfully retried.
+      // This check might be redundant if shouldRetry is comprehensive or if non-retryable errors are always thrown.
+      // For example, if a 404 is encountered, defaultShouldRetry returns false, withRetries throws, and it's caught below.
+      // If a 503 is encountered, it's retried, and if it keeps failing, withRetries throws, and it's caught below.
+      // A successful response from withRetries should imply a 2xx status.
+      if (response.status !== 200) { 
+        this.logger.error(`Clearbit API returned status code ${response.status} for domain ${domain} after retries`);
+        // Construct an error object similar to how Axios does for consistency in the catch block
+        const error = new Error(`Clearbit API returned status code ${response.status}`);
+        error.response = response; // Attach response for the catch block to inspect
+        throw error;
       }
       
       this.logger.debug(`Successfully enriched data for ${domain} using Clearbit`);
       return response.data;
     } catch (error) {
-      // Handle specific Clearbit errors
+      // This catch block now handles errors after withRetries has exhausted attempts,
+      // or if shouldRetry returned false for a particular error.
       if (error.response) {
         if (error.response.status === 404) {
           this.logger.warn(`No company data found via Clearbit for domain: ${domain}`);
@@ -63,12 +86,16 @@ class ClearbitService {
           this.logger.warn(`Invalid domain format for Clearbit: ${domain}`);
           return null;
         } else if (error.response.status === 429) {
-          this.logger.warn('Clearbit rate limit exceeded. Try again later.');
-          return null;
+          this.logger.warn(`Clearbit rate limit exceeded for domain: ${domain}. This might indicate retries were exhausted for a 429 error.`);
+          // The original code returned null here. If withRetries exhausts on 429, it will throw.
+          // The specific handling for 429 in the catch block might be less common if withRetries handles it,
+          // but it's a good fallback.
+          return null; 
         }
       }
       
-      this.logger.error('Error enriching company data with Clearbit', { domain, error: error.message, stack: error.stack });
+      this.logger.error('Error enriching company data with Clearbit after retries', { domain, errorMessage: error.message, errorStatus: error.response ? error.response.status : 'N/A', stack: error.stack });
+      // If the error is a non-retryable one (e.g. 404, 422), or retries exhausted for others (5xx), we return null as per original logic.
       return null;
     }
   }
