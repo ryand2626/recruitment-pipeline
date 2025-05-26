@@ -3,21 +3,30 @@
  * Validates emails for CAN-SPAM, DMARC, and other compliance requirements
  */
 
-const config = require('../../config/config');
-const logger = require('./logger');
+// const config = require('../../config/config'); // Remove
+// const logger = require('./logger'); // Remove
+// const db = require('../db'); // This would be removed if db is passed to methods, but we'll inject it.
 
 class EmailValidator {
+  constructor(config, logger, db) {
+    this.config = config;
+    this.logger = logger;
+    this.db = db; // For logConsent and hasValidConsent
+  }
+
   /**
    * Validate an email subject line for compliance
    * @param {string} subject - The email subject to validate
    * @returns {Object} Validation result { isValid: boolean, errors: string[] }
    */
-  static validateSubject(subject) {
+  validateSubject(subject) {
     const errors = [];
-    const { maxSubjectLength, requiredSubjectElements, prohibitedWords } = config.email.compliance;
+    // Use this.config for compliance settings
+    const { maxSubjectLength, requiredSubjectElements, prohibitedWords } = this.config.email.compliance;
 
     if (!subject || typeof subject !== 'string') {
-      return { isValid: false, errors: ['Subject is required'] };
+      this.logger.warn('validateSubject called with invalid subject', { subject });
+      return { isValid: false, errors: ['Subject is required and must be a string'] };
     }
 
     // Check length
@@ -51,6 +60,12 @@ class EmailValidator {
     if (allCaps) {
       errors.push('Subject is in all caps');
     }
+    
+    if (errors.length > 0) {
+        this.logger.debug('Subject validation failed', { subject, errors });
+    } else {
+        this.logger.debug('Subject validation successful', { subject });
+    }
 
     return {
       isValid: errors.length === 0,
@@ -63,10 +78,16 @@ class EmailValidator {
    * @param {Object} email - Email object containing content and headers
    * @returns {Object} Validation result { isValid: boolean, warnings: string[] }
    */
-  static validateEmailContent(email) {
+  validateEmailContent(email) {
     const warnings = [];
-    const { physicalAddress } = config.email;
+    // Use this.config for email settings
+    const { physicalAddress } = this.config.email;
 
+    if (!email || typeof email !== 'object') {
+      this.logger.warn('validateEmailContent called with invalid email object', { email });
+      return { isValid: false, warnings: ['Email object is required'] };
+    }
+    
     // Check for required CAN-SPAM elements
     if (!email.from) {
       warnings.push('Missing From header');
@@ -82,20 +103,26 @@ class EmailValidator {
       (email.text && email.text.includes(physicalAddress));
     
     if (!hasPhysicalAddress) {
-      warnings.push('Missing physical address in email content');
+      warnings.push(`Missing physical address in email content. Expected: ${physicalAddress}`);
     }
 
     // Check for unsubscribe link
     const hasUnsubscribeLink = 
-      (email.html && email.html.includes('unsubscribe')) ||
-      (email.text && email.text.toLowerCase().includes('unsubscribe'));
+      (email.html && (email.html.includes('unsubscribe') || email.html.includes('opt-out') || email.html.includes('Opt-Out'))) ||
+      (email.text && (email.text.toLowerCase().includes('unsubscribe') || email.text.toLowerCase().includes('opt-out')));
     
     if (!hasUnsubscribeLink) {
       warnings.push('Missing unsubscribe link in email content');
     }
 
+    if (warnings.length > 0) {
+        this.logger.debug('Email content validation failed', { emailFrom: email.from, subject: email.subject, warnings });
+    } else {
+        this.logger.debug('Email content validation successful', { emailFrom: email.from, subject: email.subject });
+    }
+
     return {
-      isValid: warnings.length === 0,
+      isValid: warnings.length === 0, // isValid should reflect if there are warnings
       warnings: warnings.length > 0 ? warnings : null
     };
   }
@@ -107,9 +134,16 @@ class EmailValidator {
    * @param {string} source - Source of consent (e.g., 'signup', 'import', 'api')
    * @returns {Promise<void>}
    */
-  static async logConsent(email, hasConsent, source = 'import') {
-    if (!config.email.compliance.logConsentStatus) {
+  async logConsent(email, hasConsent, source = 'import') {
+    // Use this.config to check if logging is enabled
+    if (!this.config.email.compliance.logConsentStatus) {
+      this.logger.debug('Consent logging is disabled in config. Skipping.', { email });
       return;
+    }
+
+    if (!email || typeof email !== 'string' || !email.includes('@')) {
+      this.logger.error('Invalid email provided for consent logging', { email });
+      return; // Do not attempt to log invalid email
     }
 
     try {
@@ -129,14 +163,15 @@ class EmailValidator {
         email,
         hasConsent,
         source,
-        config.email.compliance.consentExpiryDays
+        this.config.email.compliance.consentExpiryDays
       ];
 
-      await db.query(query, values);
-      logger.info('Consent logged', { email, hasConsent, source });
+      // Use this.db for database operations
+      await this.db.query(query, values);
+      this.logger.info('Consent logged successfully', { email, hasConsent, source });
     } catch (error) {
-      logger.error('Error logging consent', { error: error.message, email });
-      // Don't throw, as this shouldn't block email sending
+      this.logger.error('Error logging consent to database', { error: error.message, email, stack: error.stack });
+      // Don't throw, as this shouldn't block email sending (as per original logic)
     }
   }
 
@@ -145,7 +180,12 @@ class EmailValidator {
    * @param {string} email - Email to check
    * @returns {Promise<boolean>} True if email has valid consent
    */
-  static async hasValidConsent(email) {
+  async hasValidConsent(email) {
+    if (!email || typeof email !== 'string' || !email.includes('@')) {
+      this.logger.warn('Invalid email provided for consent check', { email });
+      return false; 
+    }
+
     try {
       const query = `
         SELECT has_consent 
@@ -156,14 +196,19 @@ class EmailValidator {
         LIMIT 1
       `;
       
-      const result = await db.query(query, [email]);
-      return result.rows.length > 0 && result.rows[0].has_consent;
+      // Use this.db for database operations
+      const result = await this.db.query(query, [email]);
+      const validConsent = result.rows.length > 0 && result.rows[0].has_consent;
+      this.logger.debug(`Consent check for ${email}: ${validConsent}`);
+      return validConsent;
     } catch (error) {
-      logger.error('Error checking consent', { error: error.message, email });
-      // Default to false if there's an error (fail-safe)
+      this.logger.error('Error checking consent from database', { error: error.message, email, stack: error.stack });
+      // Default to false if there's an error (fail-safe, as per original logic)
       return false;
     }
   }
 }
 
-module.exports = EmailValidator;
+module.exports = (config, logger, db) => {
+  return new EmailValidator(config, logger, db);
+};

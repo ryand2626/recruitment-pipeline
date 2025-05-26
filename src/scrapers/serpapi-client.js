@@ -4,56 +4,52 @@
  */
 
 const axios = require('axios');
-const config = require('../../config/config');
 const db = require('../db');
-const logger = require('../utils/logger');
 
-class SerpApiClient {
-  constructor() {
-    this.apiKey = config.apiKeys.serpApi;
-    this.baseUrl = 'https://serpapi.com/search';
-    this.jobTitles = config.jobTitles;
-  }
+module.exports = (config, logger) => {
+  const apiKey = config.apiKeys.serpApi;
+  const baseUrl = 'https://serpapi.com/search';
+  const jobTitles = config.jobTitles;
 
   /**
    * Validate that the API key is set
    * @throws {Error} If API key is not set
    */
-  validateApiKey() {
-    if (!this.apiKey) {
+  function validateApiKey() {
+    if (!apiKey) {
       throw new Error('SerpAPI key is not set. Please set SERPAPI_KEY in your environment variables.');
     }
   }
 
   /**
-   * Search for jobs using the SerpAPI Google Jobs endpoint
+   * Search for jobs using the SerpAPI Google Jobs endpoint (this is the equivalent of scrapeSerpApiPage)
    * @param {string} jobTitle - Job title to search for
    * @param {number} location - Location to search in
    * @param {number} page - Page number (0-indexed)
    * @returns {Promise<Object>} SerpAPI response
    */
-  async searchJobs(jobTitle, location = 'United States', page = 0) {
-    this.validateApiKey();
+  async function searchJobs(jobTitle, location = 'United States', page = 0) {
+    validateApiKey();
 
     try {
-      logger.info(`Searching for "${jobTitle}" jobs in ${location}, page ${page}`);
+      logger.info(`Searching for "${jobTitle}" jobs in ${location}, page ${page} via SerpAPI`);
       
       const params = {
         engine: 'google_jobs',
         q: jobTitle,
         location: location,
         hl: 'en',
-        api_key: this.apiKey,
+        api_key: apiKey,
         start: page * 10 // SerpAPI uses 10 jobs per page
       };
 
-      const response = await axios.get(this.baseUrl, { params });
+      const response = await axios.get(baseUrl, { params });
       
       if (response.status !== 200) {
         throw new Error(`SerpAPI returned status code ${response.status}`);
       }
 
-      logger.info(`Found ${response.data.jobs_results?.length || 0} jobs for "${jobTitle}"`);
+      logger.info(`Found ${response.data.jobs_results?.length || 0} jobs for "${jobTitle}" via SerpAPI`);
       return response.data;
     } catch (error) {
       logger.error('Error searching for jobs with SerpAPI', {
@@ -72,9 +68,9 @@ class SerpApiClient {
    * @param {string} source - Source of the jobs data
    * @returns {Promise<Array>} Array of inserted jobs
    */
-  async processJobResults(jobsResults, source = 'serpapi') {
+  async function processJobResults(jobsResults, source = 'serpapi') {
     if (!jobsResults || !Array.isArray(jobsResults)) {
-      logger.warn('No job results to process');
+      logger.warn('No job results to process from SerpAPI');
       return [];
     }
 
@@ -85,7 +81,7 @@ class SerpApiClient {
         // Check if job already exists in database by URL
         const exists = await db.jobExists(job.link);
         if (exists) {
-          logger.debug(`Job already exists in database: ${job.title} at ${job.company_name}`);
+          logger.debug(`Job already exists in database: ${job.title} at ${job.company_name} (SerpAPI)`);
           continue;
         }
 
@@ -114,9 +110,9 @@ class SerpApiClient {
         const insertedJob = await db.insertJob(jobData);
         insertedJobs.push(insertedJob);
         
-        logger.info(`Inserted job: ${insertedJob.title} at ${insertedJob.company}`);
+        logger.info(`Inserted job from SerpAPI: ${insertedJob.title} at ${insertedJob.company}`);
       } catch (error) {
-        logger.error('Error processing job', {
+        logger.error('Error processing job from SerpAPI', {
           job: job.title,
           company: job.company_name,
           error: error.message
@@ -130,32 +126,33 @@ class SerpApiClient {
   }
 
   /**
-   * Scrape jobs for all configured job titles
-   * @param {number} pages - Number of pages to scrape per job title
+   * Scrape jobs for all configured job titles using SerpAPI
+   * @param {number} numPages - Number of pages to scrape per job title
    * @returns {Promise<Object>} Results summary
    */
-  async scrapeAllJobs(pages = 3) {
-    this.validateApiKey();
+  async function scrapeAllJobs(numPages = 3) {
+    validateApiKey();
     
     const results = {
       total: 0,
       byTitle: {}
     };
 
-    for (const jobTitle of this.jobTitles) {
+    for (const jobTitle of jobTitles) {
       try {
         results.byTitle[jobTitle] = 0;
         
         // Scrape multiple pages for each job title
-        for (let page = 0; page < pages; page++) {
-          const data = await this.searchJobs(jobTitle, 'United States', page);
+        for (let page = 0; page < numPages; page++) {
+          // Using searchJobs which is the refactored version of scrapeSerpApiPage
+          const data = await searchJobs(jobTitle, 'United States', page); 
           
           if (!data.jobs_results || !data.jobs_results.length) {
-            logger.info(`No more results for "${jobTitle}" on page ${page}`);
+            logger.info(`No more results from SerpAPI for "${jobTitle}" on page ${page}`);
             break;
           }
           
-          const insertedJobs = await this.processJobResults(data.jobs_results);
+          const insertedJobs = await processJobResults(data.jobs_results);
           
           results.byTitle[jobTitle] += insertedJobs.length;
           results.total += insertedJobs.length;
@@ -164,15 +161,20 @@ class SerpApiClient {
           await new Promise(resolve => setTimeout(resolve, config.scraping.requestDelay));
         }
         
-        logger.info(`Completed scraping for "${jobTitle}". Added ${results.byTitle[jobTitle]} new jobs.`);
+        logger.info(`Completed scraping SerpAPI for "${jobTitle}". Added ${results.byTitle[jobTitle]} new jobs.`);
       } catch (error) {
-        logger.error(`Error scraping jobs for "${jobTitle}"`, { error: error.message });
+        logger.error(`Error scraping SerpAPI for "${jobTitle}"`, { error: error.message });
       }
     }
     
-    logger.info(`Completed scraping all job titles. Added ${results.total} new jobs in total.`);
+    logger.info(`Completed scraping all job titles from SerpAPI. Added ${results.total} new jobs in total.`);
     return results;
   }
-}
 
-module.exports = new SerpApiClient();
+  // The example asked for scrapeSerpApiPage, which I've named searchJobs for clarity as it's the primary search function.
+  // If scrapeSerpApiPage is specifically needed as a separate export with that name, it can be an alias to searchJobs.
+  return {
+    scrapeAllJobs,
+    scrapeSerpApiPage: searchJobs // Exporting searchJobs as scrapeSerpApiPage
+  };
+};

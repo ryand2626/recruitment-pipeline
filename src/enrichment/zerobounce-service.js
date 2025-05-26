@@ -4,13 +4,15 @@
  */
 
 const axios = require('axios');
-const config = require('../../config/config');
-const logger = require('../utils/logger');
+// const config = require('../../config/config'); // Remove
+// const logger = require('../utils/logger');   // Remove
 
 class ZeroBounceService {
-  constructor() {
+  constructor(config, logger) {
     this.apiKey = config.apiKeys.zeroBounce;
-    this.baseUrl = 'https://api.zerobounce.net/v2';
+    this.baseUrl = 'https://api.zerobounce.net/v2'; // Corrected base URL based on usage
+    this.logger = logger;
+    this.config = config; // Store config if other parts of it are needed
   }
 
   /**
@@ -19,6 +21,7 @@ class ZeroBounceService {
    */
   validateApiKey() {
     if (!this.apiKey) {
+      this.logger.error('ZeroBounce API key is not set. Please set ZEROBOUNCE_API_KEY in your environment variables.');
       throw new Error('ZeroBounce API key is not set. Please set ZEROBOUNCE_API_KEY in your environment variables.');
     }
   }
@@ -38,13 +41,14 @@ class ZeroBounceService {
       });
       
       if (response.status !== 200) {
+        this.logger.error(`ZeroBounce API /getcredits returned status code ${response.status}`);
         throw new Error(`ZeroBounce API returned status code ${response.status}`);
       }
       
-      logger.debug(`ZeroBounce credits remaining: ${response.data.Credits}`);
+      this.logger.debug(`ZeroBounce credits remaining: ${response.data.Credits}`);
       return response.data;
     } catch (error) {
-      logger.error('Error checking ZeroBounce credits', { error: error.message });
+      this.logger.error('Error checking ZeroBounce credits', { error: error.message, stack: error.stack });
       throw error;
     }
   }
@@ -58,27 +62,29 @@ class ZeroBounceService {
     this.validateApiKey();
     
     if (!email || !email.includes('@')) {
-      logger.warn(`Invalid email format: ${email}`);
+      this.logger.warn(`Invalid email format for ZeroBounce validation: ${email}`);
       return {
         address: email,
         status: 'invalid',
+        sub_status: 'format_error', // Adding sub_status for clarity
         valid: false,
         error: 'Invalid email format'
       };
     }
     
     try {
-      logger.info(`Validating email: ${email}`);
+      this.logger.info(`Validating email with ZeroBounce: ${email}`);
       
       const response = await axios.get(`${this.baseUrl}/validate`, {
         params: {
           api_key: this.apiKey,
           email: email,
-          ip_address: ''
+          ip_address: '' // As per original code, IP address is optional and can be empty
         }
       });
       
       if (response.status !== 200) {
+        this.logger.error(`ZeroBounce API /validate returned status code ${response.status} for email ${email}`);
         throw new Error(`ZeroBounce API returned status code ${response.status}`);
       }
       
@@ -87,10 +93,10 @@ class ZeroBounceService {
       // Determine if the email is valid based on the status
       const valid = this.isEmailValid(result);
       
-      logger.debug(`Email validation result for ${email}: ${result.status}, Valid: ${valid}`);
+      this.logger.debug(`ZeroBounce validation result for ${email}: ${result.status}, SubStatus: ${result.sub_status}, Valid: ${valid}`);
       
       return {
-        address: email,
+        address: result.address, // Use address from response
         status: result.status,
         sub_status: result.sub_status,
         account: result.account,
@@ -99,7 +105,7 @@ class ZeroBounceService {
         domain_age_days: result.domain_age_days,
         smtp_provider: result.smtp_provider,
         mx_record: result.mx_record,
-        mx_found: result.mx_found,
+        mx_found: result.mx_found === 'true', // Convert to boolean
         firstname: result.firstname,
         lastname: result.lastname,
         gender: result.gender,
@@ -111,11 +117,12 @@ class ZeroBounceService {
         valid: valid
       };
     } catch (error) {
-      logger.error('Error validating email', { email, error: error.message });
+      this.logger.error('Error validating email with ZeroBounce', { email, error: error.message, stack: error.stack });
       
       return {
         address: email,
         status: 'error',
+        sub_status: 'api_error',
         valid: false,
         error: error.message
       };
@@ -129,24 +136,16 @@ class ZeroBounceService {
    */
   isEmailValid(result) {
     // Valid statuses according to ZeroBounce docs
-    const validStatuses = ['valid'];
+    const validStatuses = ['valid']; 
+    // We are strict: only 'valid' status is considered truly usable.
+    // 'catch-all' might be valid but often not desirable for outreach.
+    // 'unknown', 'spamtrap', 'abuse', 'do_not_mail' are definitely not valid.
     
-    // Reject catch-all, invalid, abuse, spamtrap, etc.
-    const invalidStatuses = ['invalid', 'abuse', 'spamtrap', 'catch-all', 'unknown'];
-    
-    if (validStatuses.includes(result.status)) {
-      return true;
-    } else if (invalidStatuses.includes(result.status)) {
-      return false;
-    }
-    
-    // For other statuses like 'do_not_mail', 'unconfirmed', etc.
-    // We'll consider them invalid for our purposes
-    return false;
+    return validStatuses.includes(result.status);
   }
 
   /**
-   * Batch validate multiple email addresses (max 100 at a time)
+   * Batch validate multiple email addresses (max 100 at a time as per original code)
    * @param {Array<string>} emails - Array of email addresses
    * @returns {Promise<Array<Object>>} Array of validation results
    */
@@ -154,52 +153,58 @@ class ZeroBounceService {
     this.validateApiKey();
     
     if (!emails || !Array.isArray(emails) || emails.length === 0) {
+      this.logger.warn('ZeroBounce batchValidateEmails called with no emails.');
       return [];
     }
     
-    // ZeroBounce limits batch size to 100
-    const maxBatchSize = 100;
+    // ZeroBounce limits batch size (original code mentioned 100)
+    const maxBatchSize = this.config.enrichment?.zeroBounceMaxBatchSize || 100;
     
     if (emails.length > maxBatchSize) {
-      logger.warn(`Batch size exceeds maximum of ${maxBatchSize}. Only validating first ${maxBatchSize} emails.`);
+      this.logger.warn(`ZeroBounce batch size exceeds maximum of ${maxBatchSize}. Only validating first ${maxBatchSize} emails.`);
       emails = emails.slice(0, maxBatchSize);
     }
     
     try {
-      logger.info(`Batch validating ${emails.length} emails`);
+      this.logger.info(`Batch validating ${emails.length} emails with ZeroBounce`);
       
-      // For batch validation, we need to format the data for the API
-      const apiUrl = `${this.baseUrl}/validatebatch`;
+      const apiUrl = `${this.baseUrl}/validatebatch`; // Endpoint for batch
       
       const batchData = emails.map(email => ({
-        email_address: email
+        email_address: email,
+        ip_address: '' // Optional, can be empty
       }));
       
-      const response = await axios.post(apiUrl, {
+      const response = await axios.post(apiUrl, { // POST request for batch
         api_key: this.apiKey,
         email_batch: batchData
       });
       
       if (response.status !== 200) {
+        this.logger.error(`ZeroBounce API /validatebatch returned status code ${response.status}`);
         throw new Error(`ZeroBounce API returned status code ${response.status}`);
       }
       
       // Process the results and add the 'valid' flag
       const results = response.data.email_batch.map(result => ({
-        ...result,
+        address: result.address, // Use address from response
+        status: result.status,
+        sub_status: result.sub_status,
+        // ... include other relevant fields from batch response if needed
         valid: this.isEmailValid(result)
       }));
       
-      logger.debug(`Batch validation completed for ${results.length} emails`);
+      this.logger.debug(`ZeroBounce batch validation completed for ${results.length} emails`);
       
       return results;
     } catch (error) {
-      logger.error('Error batch validating emails', { error: error.message });
+      this.logger.error('Error batch validating emails with ZeroBounce', { error: error.message, stack: error.stack });
       
-      // Return error results for all emails
+      // Return error results for all emails in the batch
       return emails.map(email => ({
         address: email,
         status: 'error',
+        sub_status: 'batch_api_error',
         valid: false,
         error: error.message
       }));
@@ -207,4 +212,6 @@ class ZeroBounceService {
   }
 }
 
-module.exports = new ZeroBounceService();
+module.exports = (config, logger) => {
+  return new ZeroBounceService(config, logger);
+};
