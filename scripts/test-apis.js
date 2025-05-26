@@ -1,16 +1,16 @@
-require('dotenv').config();
 const axios = require('axios');
 const sendgridMail = require('@sendgrid/mail');
+const config = require('../../config/config.js');
 
 // Set up SendGrid
-sendgridMail.setApiKey(process.env.SENDGRID_API_KEY);
+sendgridMail.setApiKey(config.apiKeys.sendGrid);
 
 async function testSerpAPI() {
   console.log('Testing SERP API...');
   try {
     const response = await axios.get('https://serpapi.com/search.json', {
       params: {
-        api_key: process.env.SERPAPI_KEY,
+        api_key: config.apiKeys.serpApi,
         q: 'test search',
         engine: 'google',
         location: 'United States'
@@ -30,12 +30,12 @@ async function testHunterAPI() {
   try {
     const response = await axios.get('https://api.hunter.io/v2/account', {
       params: {
-        api_key: process.env.HUNTER_API_KEY
+        api_key: config.apiKeys.hunter
       }
     });
     console.log('✅ Hunter.io API is working');
     console.log(`  Status: ${response.status}`);
-    console.log(`  Email: ${response.data.data.email}`);
+    console.log(`  Email received: ${!!response.data.data.email}`);
     console.log(`  Plan: ${response.data.data.plan_name}`);
     console.log(`  Remaining requests: ${response.data.data.requests_remaining}`);
     return true;
@@ -50,7 +50,7 @@ async function testZeroBounceAPI() {
   try {
     const response = await axios.get('https://api.zerobounce.net/v2/credits', {
       params: {
-        api_key: process.env.ZEROBOUNCE_API_KEY
+        api_key: config.apiKeys.zeroBounce
       }
     });
     console.log('✅ ZeroBounce API is working');
@@ -68,7 +68,7 @@ async function testSendGridAPI() {
   try {
     const msg = {
       to: 'test@example.com',
-      from: process.env.FROM_EMAIL || 'test@example.com',
+      from: config.email.fromEmail || 'test@example.com',
       subject: 'SendGrid Test',
       text: 'This is a test email from SendGrid',
       html: '<strong>This is a test email from SendGrid</strong>',
