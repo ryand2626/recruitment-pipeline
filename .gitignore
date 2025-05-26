@@ -3,6 +3,9 @@
 .env.*
 !.env.example
 
+# Allow .devcontainer for VS Code
+!.devcontainer/
+
 # Dependencies
 node_modules/
 package-lock.json
@@ -55,7 +58,8 @@ bower_components
 .next
 
 # Docker
-Dockerfile
-Dockerfile.*
-docker-compose*.yml
-docker-compose*
+# Allow Dockerfile and docker-compose in root
+# Dockerfile
+# Dockerfile.*
+# docker-compose*.yml
+# docker-compose*

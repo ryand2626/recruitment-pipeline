@@ -1,0 +1,81 @@
+version: '3.8'
+
+services:
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: jobs-pipeline-worker
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-jobsadmin}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-X2tP9vR7sQ4mE5jL8kF3wA6bC1dN0pZ}
+      - POSTGRES_DB=${POSTGRES_DB:-jobspipeline}
+      - SERPAPI_KEY=${SERPAPI_KEY}
+      - HUNTER_API_KEY=${HUNTER_API_KEY}
+      - CLEARBIT_API_KEY=${CLEARBIT_API_KEY}
+      - ZEROBOUNCE_API_KEY=${ZEROBOUNCE_API_KEY}
+      - SENDGRID_API_KEY=${SENDGRID_API_KEY}
+      - FROM_EMAIL=${FROM_EMAIL:-outreach@yourdomain.com}
+      - FROM_NAME=${FROM_NAME:-Recruiting Team}
+      - SENDGRID_TEMPLATE_ID=${SENDGRID_TEMPLATE_ID}
+      - UNSUBSCRIBE_URL=${UNSUBSCRIBE_URL:-https://yourdomain.com/unsubscribe}
+      - WEBHOOK_PORT=3000
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      - postgres
+
+  postgres:
+    image: postgres:14-alpine
+    container_name: jobs-pipeline-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-X2tP9vR7sQ4mE5jL8kF3wA6bC1dN0pZ}  # Strong default password, override via env
+      POSTGRES_USER: ${POSTGRES_USER:-jobsadmin}
+      POSTGRES_DB: ${POSTGRES_DB:-jobspipeline}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jobsadmin -d jobspipeline"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: jobs-pipeline-n8n
+    restart: unless-stopped
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=${N8N_USER:-admin}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD:-D7yH9xK2pF5mT3bW}  # Strong default password
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - N8N_HOST=${N8N_HOST:-localhost}
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB:-jobspipeline}
+      - DB_POSTGRESDB_USER=${POSTGRES_USER:-jobsadmin}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD:-X2tP9vR7sQ4mE5jL8kF3wA6bC1dN0pZ}
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_data:
+    name: jobs-pipeline-postgres-data
+  n8n_data:
+    name: jobs-pipeline-n8n-data
