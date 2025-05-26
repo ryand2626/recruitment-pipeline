@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# Robertson Workflow Setup Script (v2) – ready for both local use & Codex CI
+# Robertson Workflow Setup Script (v3)
 # ---------------------------------------------------------------------------
-# * Works when Codex launches the repo (runs as root, no Docker daemon).
-# * Still keeps the “don’t‑run‑as‑root” guard for local laptops.
-# * Detects Codex through $CODEX env‑var (set this to "true" in the Codex UI).
+# * Works out‑of‑the‑box in Codex CI / any other root‑run CI.
+# * Still warns **locally** if you try to run it as root — but never exits in CI.
+#   (CI systems usually set $CI=true; Codex does as well.)
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
-printf '\n\033[1m🚀  Robertson Workflow Setup\033[0m\n'  # bold header
+printf '\n\033[1m🚀  Robertson Workflow Setup\033[0m\n'
 
 # ────────────────────────────────────────────────────────────────────────────
-# 1. Abort if running as root on a *developer machine* (Codex always runs UID0)
+# 1. Warn (but do not exit) if running as root on a dev machine.
+#    We allow UID 0 when $CI is set (Codex / GitHub Actions / etc.).
 # ────────────────────────────────────────────────────────────────────────────
-if [[ -z "${CODEX:-}" && "$(id -u)" == "0" ]]; then
-  echo "❌ Please don't run this script as root. Use a normal user account."
-  exit 1
+if [[ "$(id -u)" == "0" && -z "${CI:-}" ]]; then
+  echo "⚠️  You are running as root. That's fine in CI but not recommended on a laptop."
 fi
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -35,23 +35,20 @@ if [[ -f package.json ]]; then
 fi
 
 # ────────────────────────────────────────────────────────────────────────────
-# 4. Create standard runtime folders
+# 4. Create runtime folders
 # ────────────────────────────────────────────────────────────────────────────
 mkdir -p logs data/exports
 
 # ────────────────────────────────────────────────────────────────────────────
 # 5. Secure perms (keep secrets private; make *.sh callable)
 # ────────────────────────────────────────────────────────────────────────────
-chmod 600 .env || true
+chmod 600 .env   || true
 chmod +x *.sh    || true
 
 # ────────────────────────────────────────────────────────────────────────────
-# 6. Environment‑specific extras
+# 6. Local‑only Docker setup (skipped in Codex because $CI is set)
 # ────────────────────────────────────────────────────────────────────────────
-if [[ -n "${CODEX:-}" ]]; then
-  echo "🌐 Detected Codex CI environment – skipping local Docker setup"
-  echo "    (service containers are defined in .codex.yml)"
-else
+if [[ -z "${CI:-}" ]]; then
   if command -v docker &>/dev/null && docker info &>/dev/null; then
     echo "🐳 Docker detected – building local image & starting compose services"
     docker build -t robertson-workflow .
@@ -59,8 +56,10 @@ else
       docker-compose up -d
     fi
   else
-    echo "⚠️  Docker not available. Proceeding without containerised services."
+    echo "⚠️  Docker not available locally. Proceeding without containerised services."
   fi
+else
+  echo "🌐 CI environment detected – external services expected via .codex.yml"
 fi
 
 # ────────────────────────────────────────────────────────────────────────────
