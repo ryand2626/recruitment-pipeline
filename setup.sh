@@ -48,19 +48,33 @@ fi
 mkdir -p logs data/exports\chmod 600 .env || true
 chmod +x *.sh || true
 
-# 5. Local‑only Docker setup (skipped in CI)
-if [[ -z "${CI:-}" ]]; then
-  if command -v docker &>/dev/null && docker info &>/dev/null; then
-    echo "🐳 Docker detected – building local image & starting compose services"
-    docker build -t robertson-workflow .
-    if [[ -f docker-compose.yml ]]; then
+# 5. Docker setup (with CI-specific overrides)
+if command -v docker &>/dev/null && docker info &>/dev/null; then
+  echo "🐳 Docker detected – building local image & starting services"
+  docker build -t robertson-workflow .
+  
+  if [[ -f docker-compose.yml ]]; then
+    # In CI, use the override file to avoid port conflicts
+    if [[ -n "${CI:-}" ]]; then
+      echo "🌐 CI environment detected – using docker-compose.ci.yml overrides"
+      if [[ -f docker-compose.ci.yml ]]; then
+        docker-compose -f docker-compose.yml -f docker-compose.ci.yml up -d
+      else
+        docker-compose up -d
+      fi
+    else
+      # Local development - check if ports are available
+      if lsof -i :5432 &>/dev/null; then
+        echo "⚠️  Port 5432 is in use. Make sure it's not another Postgres instance."
+      fi
+      if lsof -i :5678 &>/dev/null; then
+        echo "⚠️  Port 5678 is in use. Make sure it's not another n8n instance."
+      fi
       docker-compose up -d
     fi
-  else
-    echo "⚠️  Docker not available locally. Proceeding without containerised services."
   fi
-else
-  echo "🌐 CI environment detected – external services expected via .codex.yml"
+elif [[ -z "${CI:-}" ]]; then
+  echo "⚠️  Docker not available locally. Proceeding without containerised services."
 fi
 
 # 6. Finish

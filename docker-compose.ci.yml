@@ -1,0 +1,8 @@
+version: '3.8'
+
+services:
+  postgres:
+    ports: []  # No host binding in CI
+    
+  n8n:
+    ports: []  # No host binding in CI
