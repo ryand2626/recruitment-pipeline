@@ -5,21 +5,25 @@
 
 const express = require('express');
 const bodyParser = require('body-parser');
-const sendgridService = require('./sendgrid-service');
-const db = require('../db');
-const logger = require('../utils/logger');
+// const sendgridService = require('./sendgrid-service'); // Remove
+// const db = require('../db'); // Remove (if only sendgridService used it, it's already injected there)
+// const logger = require('../utils/logger'); // Remove
 
 class OutreachWorker {
-  constructor() {
+  constructor(sendgridService, logger, config) {
     this.sendgridService = sendgridService;
+    this.logger = logger;
+    this.config = config; // For WEBHOOK_PORT and other configs
   }
 
   /**
    * Initialize webhook server for handling email events
-   * @param {number} port - Port to listen on
+   * @param {number} port - Optional port to listen on, overrides config if provided
    * @returns {Promise<Object>} Express server
    */
-  async initWebhookServer(port = 3000) {
+  async initWebhookServer(port) {
+    // Use provided port or fallback to config, then default
+    const actualPort = port || (this.config && this.config.ports && this.config.ports.webhook) || 3000;
     const app = express();
     
     // Parse JSON bodies
@@ -28,44 +32,55 @@ class OutreachWorker {
     // Handle SendGrid webhook events
     app.post('/webhook/sendgrid', async (req, res) => {
       try {
-        const events = req.body;
+        const events = req.body; // SendGrid sends events in an array
         
         if (!Array.isArray(events)) {
-          logger.warn('Received non-array webhook data', { data: events });
+          this.logger.warn('Received non-array webhook data from SendGrid', { data: events });
           return res.status(400).send('Expected array of events');
         }
         
-        logger.info(`Received ${events.length} SendGrid webhook events`);
+        this.logger.info(`Received ${events.length} SendGrid webhook events`);
         
         // Process each event
-        const results = await Promise.all(
+        // Using Promise.allSettled to ensure all events are attempted even if some fail
+        const results = await Promise.allSettled(
           events.map(event => this.sendgridService.processWebhookEvent(event))
         );
         
+        const processedCount = results.filter(r => r.status === 'fulfilled' && r.value !== null).length;
+        const failedCount = results.filter(r => r.status === 'rejected' || (r.status === 'fulfilled' && r.value === null)).length;
+
+        this.logger.info(`Webhook processing complete. Processed: ${processedCount}, Failed/Skipped: ${failedCount}`);
+        
+        // SendGrid expects a 2xx response to acknowledge receipt.
+        // Even if some events failed processing on our end, we received them.
         return res.status(200).send({
+          message: "Events received",
           received: events.length,
-          processed: results.filter(r => r !== null).length
+          successfully_processed: processedCount,
+          failed_or_skipped_processing: failedCount
         });
-      } catch (error) {
-        logger.error('Error processing webhook events', { error: error.message });
+      } catch (error) { // Catch errors from body parsing or other unexpected issues
+        this.logger.error('Critical error processing SendGrid webhook events batch', { error: error.message, stack: error.stack });
         return res.status(500).send('Error processing webhook events');
       }
     });
     
     // Health check endpoint
     app.get('/health', (req, res) => {
+      this.logger.debug('Health check endpoint hit.');
       res.status(200).send('OK');
     });
     
     // Start the server
     return new Promise((resolve, reject) => {
-      const server = app.listen(port, () => {
-        logger.info(`Webhook server listening on port ${port}`);
+      const server = app.listen(actualPort, () => {
+        this.logger.info(`Webhook server listening on port ${actualPort}`);
         resolve(server);
       });
       
       server.on('error', (error) => {
-        logger.error('Error starting webhook server', { error: error.message });
+        this.logger.error('Error starting webhook server', { port: actualPort, error: error.message, stack: error.stack });
         reject(error);
       });
     });
@@ -73,23 +88,30 @@ class OutreachWorker {
 
   /**
    * Process a batch of jobs for outreach
-   * @param {Object} options - Processing options
+   * @param {Object} options - Processing options (e.g., batchSize)
    * @returns {Promise<Object>} Processing results
    */
   async processBatch(options = {}) {
-    const batchSize = options.batchSize || 10;
+    // Use batchSize from options, then config, then default
+    const batchSize = options.batchSize || (this.config && this.config.outreach && this.config.outreach.batchSize) || 10;
     
     try {
-      logger.info(`Starting outreach batch with size: ${batchSize}`);
+      this.logger.info(`Starting outreach batch processing with size: ${batchSize}`);
       
-      // Process outreach
+      if (!this.sendgridService) {
+        this.logger.error('SendGrid service is not available. Cannot process outreach batch.');
+        throw new Error('SendGrid service not initialized or provided.');
+      }
+      
+      // Process outreach using the injected sendgridService
       const results = await this.sendgridService.processOutreachBatch(batchSize);
       
-      logger.info(`Completed outreach batch. Queued: ${results.queued}, Skipped: ${results.skipped}, Failed: ${results.failed}`);
+      this.logger.info(`Outreach batch processing completed. Successfully Queued: ${results.successfully_queued}, Skipped (Unsub): ${results.skipped_unsubscribed}, Failed to Queue: ${results.failed_to_queue}`);
       
       return results;
     } catch (error) {
-      logger.error('Error processing outreach batch', { error: error.message });
+      this.logger.error('Error processing outreach batch', { error: error.message, stack: error.stack });
+      // Depending on desired behavior, you might want to re-throw or handle specific errors
       throw error;
     }
   }
@@ -108,10 +130,11 @@ class OutreachWorker {
     // - {{role}} - Job role/title
     // - {{location}} - Job location
     // - {{job_url}} - URL to the job posting
-    // - {{unsubscribe_url}} - URL for unsubscribing
-    // - {{physical_address}} - Physical address for CAN-SPAM compliance
+    // - {{unsubscribe_url}} - URL for unsubscribing (passed in dynamic_template_data)
+    // - {{physical_address}} - Physical address for CAN-SPAM compliance (passed in dynamic_template_data)
+    // - {{current_year}} - For copyright (passed in dynamic_template_data)
     
-    logger.info('Email template needs to be created manually in SendGrid UI');
+    this.logger.info('Email template creation should be done manually in the SendGrid UI. This function is for documentation.');
     
     // Example template HTML structure:
     const templateHtml = `
@@ -140,8 +163,9 @@ class OutreachWorker {
         <div style="margin-top: 30px; font-size: 12px; color: #999; border-top: 1px solid #eee; padding-top: 10px;">
           <p>If you're not the right person to contact about this, I'd appreciate if you could forward this to the appropriate person.</p>
           <p><a href="{{job_url}}">View the job posting</a></p>
-          <p><a href="{{unsubscribe_url}}">Unsubscribe</a> from future emails.</p>
+          <p>To unsubscribe from future emails, please <a href="{{unsubscribe_url}}">click here</a>.</p>
           <p>{{physical_address}}</p>
+          <p>&copy; {{current_year}} [Your Company]. All rights reserved.</p>
         </div>
       </div>
     </body>
@@ -150,32 +174,12 @@ class OutreachWorker {
     
     return {
       created: false,
-      message: 'Template needs to be created manually in SendGrid UI',
+      message: 'Template needs to be created manually in SendGrid UI or via API if SendGrid client library is used more extensively.',
       templateExample: templateHtml
     };
   }
 }
 
-// If this file is run directly, start the worker
-if (require.main === module) {
-  (async () => {
-    try {
-      logger.info('Starting outreach worker');
-      
-      const worker = new OutreachWorker();
-      
-      // Initialize webhook server
-      await worker.initWebhookServer(process.env.WEBHOOK_PORT || 3000);
-      
-      // Process a batch
-      await worker.processBatch();
-      
-      logger.info('Outreach worker completed initial batch');
-    } catch (error) {
-      logger.error('Error in outreach worker', { error: error.message });
-      process.exit(1);
-    }
-  })();
-}
-
-module.exports = new OutreachWorker();
+module.exports = (sendgridService, logger, config) => {
+  return new OutreachWorker(sendgridService, logger, config);
+};

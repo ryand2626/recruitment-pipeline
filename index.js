@@ -5,14 +5,24 @@
 
 const express = require('express');
 const cron = require('node-cron');
-const scrapers = require('./src/scrapers');
-const enrichmentService = require('./src/enrichment');
-const outreachWorker = require('./src/outreach');
-const logger = require('./src/utils/logger');
+// const scrapers = require('./src/scrapers'); // Remove
+// const enrichmentService = require('./src/enrichment'); // Remove
+// const outreachWorker = require('./src/outreach'); // Remove
+// const logger = require('./src/utils/logger'); // Remove
 
-// Create Express app for webhook handling
+const container = require('./src/container');
+const { initializeServices } = require('./src/service-registration');
+
+// Module-level service variables, initialized in init()
+let logger = null;
+let scrapersService = null;
+let enrichmentService = null;
+let outreachWorker = null;
+let config = null; // To get port for webhook server
+
+// Create Express app for webhook handling and manual triggers
 const app = express();
-const port = process.env.WEBHOOK_PORT || 3000;
+// Port will be determined in init from config
 
 // Parse JSON request bodies
 app.use(express.json());
@@ -20,12 +30,32 @@ app.use(express.json());
 // Initialize the application
 async function init() {
   try {
-    logger.info('Initializing Jobs Pipeline application');
+    // Initialize all services and register them in the container
+    initializeServices(); // This should synchronously register factories
+
+    // Resolve core services from the container
+    // Logger is critical, try to get it first.
+    try {
+      logger = container.get('logger');
+      config = container.get('config'); // Get config for port and other settings
+    } catch (e) {
+      // If logger itself fails, use console.error
+      console.error('Fatal Error: Could not resolve logger or config from DI container.', e);
+      process.exit(1);
+    }
+
+    logger.info('Logger and Config services initialized.');
+
+    scrapersService = container.get('scrapersService');
+    enrichmentService = container.get('enrichmentService');
+    outreachWorker = container.get('outreachWorker'); // This is the OutreachWorker instance
+
+    logger.info('Initializing Jobs Pipeline application with DI services...');
     
-    // Start webhook server for handling email events
-    app.listen(port, () => {
-      logger.info(`Webhook server listening on port ${port}`);
-    });
+    // Start webhook server using the OutreachWorker's method
+    // The port should come from config now, via the OutreachWorker or directly
+    // outreachWorker.initWebhookServer() will use its own configured port
+    await outreachWorker.initWebhookServer(); // outreachWorker now gets port from its own config
     
     // Set up routes
     setupRoutes();
@@ -33,212 +63,197 @@ async function init() {
     // Set up scheduled jobs
     setupScheduledJobs();
     
-    logger.info('Jobs Pipeline application initialized successfully');
+    logger.info('Jobs Pipeline application initialized successfully.');
   } catch (error) {
-    logger.error('Error initializing application', { error: error.message });
+    // Use console.error if logger is not available
+    const log = logger || console;
+    log.error('Fatal error initializing application', { error: error.message, stack: error.stack });
     process.exit(1);
   }
 }
 
 // Set up Express routes
 function setupRoutes() {
-  // SendGrid webhook endpoint
-  app.post('/webhook/sendgrid', async (req, res) => {
-    try {
-      const events = req.body;
-      
-      if (!Array.isArray(events)) {
-        logger.warn('Received non-array webhook data', { data: events });
-        return res.status(400).send('Expected array of events');
-      }
-      
-      logger.info(`Received ${events.length} SendGrid webhook events`);
-      
-      // Process events in the background
-      Promise.all(events.map(event => outreachWorker.sendgridService.processWebhookEvent(event)))
-        .catch(error => logger.error('Error processing webhook events', { error: error.message }));
-      
-      // Respond immediately to SendGrid
-      return res.status(200).send({
-        received: events.length,
-        processing: true
-      });
-    } catch (error) {
-      logger.error('Error handling SendGrid webhook', { error: error.message });
-      return res.status(500).send('Internal server error');
-    }
-  });
-  
-  // Health check endpoint
+  // SendGrid webhook endpoint is now managed by outreachWorker.initWebhookServer() internally
+  // We just need to ensure the app instance is passed or routes are setup there.
+  // For now, assuming outreachWorker.initWebhookServer() sets up its own routes on the app it creates.
+  // If OutreachWorker needs to add routes to *this* app instance, it would need app passed to it.
+  // The current OutreachWorker creates its own express app.
+  // This means the app instance here is only for manual triggers and health checks.
+  // If a single app instance is desired, OutreachWorker's initWebhookServer needs refactoring.
+  // For this task, we assume the two app instances are fine (one for webhook, one for triggers).
+  // However, the /webhook/sendgrid route here is now redundant if outreachWorker handles it.
+  // Let's keep it but note it might conflict or be unused if outreachWorker's server is separate.
+  // UPDATE: The OutreachWorker's initWebhookServer is standalone.
+  // The routes here are for the main application (manual triggers, health).
+
   app.get('/health', (req, res) => {
+    if (!logger) return res.status(503).send('Logger not available');
+    logger.info('Health check requested');
     res.status(200).send({
       status: 'ok',
       timestamp: new Date().toISOString()
     });
   });
   
-  // Scraping trigger endpoint (manually trigger scraping)
   app.post('/trigger/scrape', async (req, res) => {
+    if (!logger || !scrapersService) return res.status(503).send('Scraping service not available');
     try {
-      logger.info('Manual scraping triggered');
-      
-      // Start scraping in the background
-      runScraping()
-        .then(results => {
-          logger.info('Manual scraping completed', { results });
-        })
-        .catch(error => {
-          logger.error('Error in manual scraping', { error: error.message });
-        });
-      
-      return res.status(200).send({
-        status: 'started',
-        message: 'Scraping process started in the background'
-      });
+      logger.info('Manual scraping triggered via API');
+      runScraping() // No await, run in background
+        .then(results => logger.info('Manual scraping via API completed.', { results }))
+        .catch(error => logger.error('Error in manual scraping via API.', { error: error.message, stack: error.stack }));
+      return res.status(202).send({ status: 'accepted', message: 'Scraping process initiated.' });
     } catch (error) {
-      logger.error('Error triggering manual scraping', { error: error.message });
+      logger.error('Error triggering manual scraping via API', { error: error.message, stack: error.stack });
       return res.status(500).send('Internal server error');
     }
   });
   
-  // Enrichment trigger endpoint (manually trigger enrichment)
   app.post('/trigger/enrich', async (req, res) => {
+    if (!logger || !enrichmentService) return res.status(503).send('Enrichment service not available');
     try {
-      logger.info('Manual enrichment triggered');
-      
-      // Start enrichment in the background
-      runEnrichment()
-        .then(results => {
-          logger.info('Manual enrichment completed', { results });
-        })
-        .catch(error => {
-          logger.error('Error in manual enrichment', { error: error.message });
-        });
-      
-      return res.status(200).send({
-        status: 'started',
-        message: 'Enrichment process started in the background'
-      });
+      logger.info('Manual enrichment triggered via API');
+      runEnrichment() // No await, run in background
+        .then(results => logger.info('Manual enrichment via API completed.', { results }))
+        .catch(error => logger.error('Error in manual enrichment via API.', { error: error.message, stack: error.stack }));
+      return res.status(202).send({ status: 'accepted', message: 'Enrichment process initiated.' });
     } catch (error) {
-      logger.error('Error triggering manual enrichment', { error: error.message });
+      logger.error('Error triggering manual enrichment via API', { error: error.message, stack: error.stack });
       return res.status(500).send('Internal server error');
     }
   });
   
-  // Outreach trigger endpoint (manually trigger outreach)
   app.post('/trigger/outreach', async (req, res) => {
+    if (!logger || !outreachWorker) return res.status(503).send('Outreach service not available');
     try {
-      logger.info('Manual outreach triggered');
-      
-      // Start outreach in the background
-      runOutreach()
-        .then(results => {
-          logger.info('Manual outreach completed', { results });
-        })
-        .catch(error => {
-          logger.error('Error in manual outreach', { error: error.message });
-        });
-      
-      return res.status(200).send({
-        status: 'started',
-        message: 'Outreach process started in the background'
-      });
+      logger.info('Manual outreach triggered via API');
+      runOutreach() // No await, run in background
+        .then(results => logger.info('Manual outreach via API completed.', { results }))
+        .catch(error => logger.error('Error in manual outreach via API.', { error: error.message, stack: error.stack }));
+      return res.status(202).send({ status: 'accepted', message: 'Outreach process initiated.' });
     } catch (error) {
-      logger.error('Error triggering manual outreach', { error: error.message });
+      logger.error('Error triggering manual outreach via API', { error: error.message, stack: error.stack });
       return res.status(500).send('Internal server error');
     }
+  });
+
+  // Main application listener (for manual triggers, health)
+  // Port for this app should be different from webhook port if they are separate servers.
+  const mainAppPort = config?.ports?.mainApp || 3001; // Example: get from config or default
+  app.listen(mainAppPort, () => {
+    logger.info(`Main application server (triggers, health) listening on port ${mainAppPort}`);
   });
 }
 
 // Set up scheduled jobs using node-cron
 function setupScheduledJobs() {
-  // Schedule scraping job - Run every day at 1:00 AM
-  cron.schedule('0 1 * * *', async () => {
-    logger.info('Running scheduled scraping job');
-    
-    try {
-      await runScraping();
-      logger.info('Scheduled scraping job completed');
-    } catch (error) {
-      logger.error('Error in scheduled scraping job', { error: error.message });
-    }
-  });
+  if (!logger || !config) {
+    console.error("Cannot setup scheduled jobs: logger or config not initialized.");
+    return;
+  }
+
+  const jobsConfig = config.scheduledJobs || {};
+
+  // Schedule scraping job
+  if (jobsConfig.scraping?.enabled !== false && jobsConfig.scraping?.cron) {
+    cron.schedule(jobsConfig.scraping.cron, async () => {
+      logger.info('Running scheduled scraping job.');
+      try {
+        await runScraping();
+        logger.info('Scheduled scraping job completed.');
+      } catch (error) {
+        logger.error('Error in scheduled scraping job', { error: error.message, stack: error.stack });
+      }
+    });
+  } else {
+    logger.info("Scheduled scraping job is disabled or cron not configured.");
+  }
   
-  // Schedule enrichment job - Run every day at 3:00 AM
-  cron.schedule('0 3 * * *', async () => {
-    logger.info('Running scheduled enrichment job');
-    
-    try {
-      await runEnrichment();
-      logger.info('Scheduled enrichment job completed');
-    } catch (error) {
-      logger.error('Error in scheduled enrichment job', { error: error.message });
-    }
-  });
+  // Schedule enrichment job
+  if (jobsConfig.enrichment?.enabled !== false && jobsConfig.enrichment?.cron) {
+    cron.schedule(jobsConfig.enrichment.cron, async () => {
+      logger.info('Running scheduled enrichment job.');
+      try {
+        await runEnrichment();
+        logger.info('Scheduled enrichment job completed.');
+      } catch (error) {
+        logger.error('Error in scheduled enrichment job', { error: error.message, stack: error.stack });
+      }
+    });
+  } else {
+     logger.info("Scheduled enrichment job is disabled or cron not configured.");
+  }
   
-  // Schedule outreach job - Run every day at 8:00 AM (ET) - Adjusted for server time
-  cron.schedule('0 8 * * *', async () => {
-    logger.info('Running scheduled outreach job');
-    
-    try {
-      await runOutreach();
-      logger.info('Scheduled outreach job completed');
-    } catch (error) {
-      logger.error('Error in scheduled outreach job', { error: error.message });
-    }
-  });
+  // Schedule outreach job
+  if (jobsConfig.outreach?.enabled !== false && jobsConfig.outreach?.cron) {
+    cron.schedule(jobsConfig.outreach.cron, async () => {
+      logger.info('Running scheduled outreach job.');
+      try {
+        await runOutreach();
+        logger.info('Scheduled outreach job completed.');
+      } catch (error) {
+        logger.error('Error in scheduled outreach job', { error: error.message, stack: error.stack });
+      }
+    });
+  } else {
+    logger.info("Scheduled outreach job is disabled or cron not configured.");
+  }
 }
 
 // Execute the scraping process
 async function runScraping() {
-  logger.info('Starting scraping process');
-  
+  if (!logger || !scrapersService) {
+    (logger || console).error('Scraping cannot run: logger or scrapersService not initialized.');
+    return;
+  }
+  logger.info('Starting scraping process...');
   try {
-    // Run both SerpAPI and Playwright scrapers
-    const results = await scrapers.runAllScrapers();
-    
-    logger.info(`Scraping completed. Added ${results.total} jobs in total.`);
+    const results = await scrapersService.runAllScrapers(); // Use DI service
+    logger.info(`Scraping completed. Added ${results.total || 0} jobs in total.`);
     return results;
   } catch (error) {
-    logger.error('Error in scraping process', { error: error.message });
+    logger.error('Error in scraping process', { error: error.message, stack: error.stack });
     throw error;
   }
 }
 
 // Execute the enrichment process
 async function runEnrichment() {
-  logger.info('Starting enrichment process');
-  
+  if (!logger || !enrichmentService) {
+    (logger || console).error('Enrichment cannot run: logger or enrichmentService not initialized.');
+    return;
+  }
+  logger.info('Starting enrichment process...');
   try {
-    // Process a batch of jobs (50 at a time)
-    const results = await enrichmentService.enrichNewJobs(50);
-    
-    logger.info(`Enrichment completed. Processed ${results.total} jobs.`);
+    const batchSize = config?.enrichment?.batchSize || 50;
+    const results = await enrichmentService.enrichNewJobs(batchSize); // Use DI service
+    logger.info(`Enrichment completed. Attempted: ${results.total_attempted || 0}.`);
     return results;
   } catch (error) {
-    logger.error('Error in enrichment process', { error: error.message });
+    logger.error('Error in enrichment process', { error: error.message, stack: error.stack });
     throw error;
   }
 }
 
 // Execute the outreach process
 async function runOutreach() {
-  logger.info('Starting outreach process');
-  
+  if (!logger || !outreachWorker) {
+    (logger || console).error('Outreach cannot run: logger or outreachWorker not initialized.');
+    return;
+  }
+  logger.info('Starting outreach process...');
   try {
-    // Process a batch of jobs (20 at a time)
-    const results = await outreachWorker.processBatch({ batchSize: 20 });
-    
-    logger.info(`Outreach completed. Queued ${results.queued} emails.`);
+    const batchSize = config?.outreach?.batchSize || 20;
+    const results = await outreachWorker.processBatch({ batchSize }); // Use DI service
+    logger.info(`Outreach completed. Queued ${results.successfully_queued || 0} emails.`);
     return results;
   } catch (error) {
-    logger.error('Error in outreach process', { error: error.message });
+    logger.error('Error in outreach process', { error: error.message, stack: error.stack });
     throw error;
   }
 }
 
 // Run the application
-init().catch(error => {
-  logger.error('Fatal error initializing application', { error: error.message });
-  process.exit(1);
-});
+// The init().catch() block is removed as init() now handles its own errors and exits.
+init();

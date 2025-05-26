@@ -4,14 +4,17 @@
  */
 
 const axios = require('axios');
-const config = require('../../config/config');
-const db = require('../db');
-const logger = require('../utils/logger');
+// const config = require('../../config/config'); // Remove
+// const db = require('../db'); // Remove
+// const logger = require('../utils/logger');   // Remove
 
 class HunterService {
-  constructor() {
+  constructor(config, logger, db) {
     this.apiKey = config.apiKeys.hunter;
     this.baseUrl = 'https://api.hunter.io/v2';
+    this.logger = logger;
+    this.db = db; // Store db instance
+    this.config = config; // Store config if other parts of it are needed
   }
 
   /**
@@ -20,6 +23,7 @@ class HunterService {
    */
   validateApiKey() {
     if (!this.apiKey) {
+      this.logger.error('Hunter.io API key is not set. Please set HUNTER_API_KEY in your environment variables.');
       throw new Error('Hunter.io API key is not set. Please set HUNTER_API_KEY in your environment variables.');
     }
   }
@@ -32,7 +36,7 @@ class HunterService {
   async getCachedDomainInfo(domain) {
     try {
       const query = 'SELECT * FROM domains_cache WHERE domain = $1';
-      const result = await db.query(query, [domain]);
+      const result = await this.db.query(query, [domain]);
       
       if (result.rows.length > 0) {
         const cachedData = result.rows[0];
@@ -41,18 +45,18 @@ class HunterService {
         const cacheAge = new Date() - new Date(cachedData.last_updated);
         const cacheDays = cacheAge / (1000 * 60 * 60 * 24);
         
-        if (cacheDays < 7) {
-          logger.debug(`Using cached domain info for ${domain}`);
+        if (cacheDays < (this.config.caching?.hunterCacheDays || 7)) {
+          this.logger.debug(`Using cached domain info for ${domain} from Hunter service`);
           return cachedData;
         } else {
-          logger.debug(`Cache for ${domain} is older than 7 days. Refreshing...`);
+          this.logger.debug(`Cache for ${domain} (Hunter service) is older than ${this.config.caching?.hunterCacheDays || 7} days. Refreshing...`);
           return null;
         }
       }
       
       return null;
     } catch (error) {
-      logger.error('Error checking domain cache', { domain, error: error.message });
+      this.logger.error('Error checking domain cache (Hunter service)', { domain, error: error.message, stack: error.stack });
       return null;
     }
   }
@@ -62,14 +66,15 @@ class HunterService {
    * @param {string} domain - Domain to cache
    * @param {string} emailPattern - Email pattern discovered for the domain
    * @param {Array} contacts - Contacts found for the domain
-   * @returns {Promise<Object>} Cached domain data
+   * @returns {Promise<Object|null>} Cached domain data or null if error
    */
   async cacheDomainInfo(domain, emailPattern, contacts) {
     try {
       // Check if domain already exists in cache
       const existingQuery = 'SELECT id FROM domains_cache WHERE domain = $1';
-      const existingResult = await db.query(existingQuery, [domain]);
+      const existingResult = await this.db.query(existingQuery, [domain]);
       
+      let result;
       if (existingResult.rows.length > 0) {
         // Update existing cache
         const query = `
@@ -78,9 +83,8 @@ class HunterService {
           WHERE domain = $3
           RETURNING *
         `;
-        const result = await db.query(query, [emailPattern, JSON.stringify(contacts), domain]);
-        logger.debug(`Updated cache for domain ${domain}`);
-        return result.rows[0];
+        result = await this.db.query(query, [emailPattern, JSON.stringify(contacts), domain]);
+        this.logger.debug(`Updated cache for domain ${domain} (Hunter service)`);
       } else {
         // Insert new cache
         const query = `
@@ -88,13 +92,14 @@ class HunterService {
           VALUES ($1, $2, $3)
           RETURNING *
         `;
-        const result = await db.query(query, [domain, emailPattern, JSON.stringify(contacts)]);
-        logger.debug(`Cached domain info for ${domain}`);
-        return result.rows[0];
+        result = await this.db.query(query, [domain, emailPattern, JSON.stringify(contacts)]);
+        this.logger.debug(`Cached domain info for ${domain} (Hunter service)`);
       }
+      return result.rows[0];
     } catch (error) {
-      logger.error('Error caching domain info', { domain, error: error.message });
-      throw error;
+      this.logger.error('Error caching domain info (Hunter service)', { domain, error: error.message, stack: error.stack });
+      // throw error; // Propagate error if needed, or return null/undefined
+      return null;
     }
   }
 
@@ -109,14 +114,15 @@ class HunterService {
     try {
       // Check cache first
       const cachedData = await this.getCachedDomainInfo(domain);
-      if (cachedData) {
+      if (cachedData && cachedData.contacts) { // Ensure contacts is not null
         return {
           pattern: cachedData.email_pattern,
-          contacts: JSON.parse(cachedData.contacts),
+          contacts: JSON.parse(cachedData.contacts), // Ensure contacts is parsed
           fromCache: true
         };
       }
       
+      this.logger.info(`Fetching domain pattern for ${domain} from Hunter.io API`);
       // If not in cache, call the API
       const response = await axios.get(`${this.baseUrl}/domain-search`, {
         params: {
@@ -126,6 +132,7 @@ class HunterService {
       });
       
       if (response.status !== 200) {
+        this.logger.error(`Hunter.io API returned status code ${response.status} for domain ${domain}`);
         throw new Error(`Hunter.io API returned status code ${response.status}`);
       }
       
@@ -142,7 +149,7 @@ class HunterService {
         fromCache: false
       };
     } catch (error) {
-      logger.error('Error finding domain pattern', { domain, error: error.message });
+      this.logger.error('Error finding domain pattern with Hunter.io', { domain, error: error.message, stack: error.stack });
       
       // Return empty results if API call fails
       return {
@@ -177,18 +184,19 @@ class HunterService {
         });
         
         if (matchingContact) {
-          logger.debug(`Found email for ${firstName} ${lastName} at ${domain} in cached contacts`);
+          this.logger.debug(`Found email for ${firstName} ${lastName} at ${domain} in cached Hunter.io contacts`);
           return {
             email: matchingContact.value,
             firstName: matchingContact.first_name,
             lastName: matchingContact.last_name,
             confidence: matchingContact.confidence,
-            source: matchingContact.sources.length > 0 ? matchingContact.sources[0].uri : 'cache',
+            source: matchingContact.sources && matchingContact.sources.length > 0 ? matchingContact.sources[0].uri : 'cache',
             fromCache: true
           };
         }
       }
       
+      this.logger.info(`Searching email for ${firstName} ${lastName} at ${domain} via Hunter.io API`);
       // If not found in cache, call the API
       const response = await axios.get(`${this.baseUrl}/email-finder`, {
         params: {
@@ -200,6 +208,7 @@ class HunterService {
       });
       
       if (response.status !== 200) {
+         this.logger.error(`Hunter.io Email Finder API returned status code ${response.status} for ${firstName} ${lastName} at ${domain}`);
         throw new Error(`Hunter.io API returned status code ${response.status}`);
       }
       
@@ -210,11 +219,11 @@ class HunterService {
         firstName: data.first_name,
         lastName: data.last_name,
         confidence: data.score,
-        source: data.sources.length > 0 ? data.sources[0].uri : null,
+        source: data.sources && data.sources.length > 0 ? data.sources[0].uri : null,
         fromCache: false
       };
     } catch (error) {
-      logger.error('Error finding email', { firstName, lastName, domain, error: error.message });
+      this.logger.error('Error finding email with Hunter.io', { firstName, lastName, domain, error: error.message, stack: error.stack });
       
       // Return empty results if API call fails
       return {
@@ -236,6 +245,7 @@ class HunterService {
     this.validateApiKey();
     
     try {
+      this.logger.info(`Verifying email ${email} with Hunter.io API`);
       const response = await axios.get(`${this.baseUrl}/email-verifier`, {
         params: {
           email: email,
@@ -244,6 +254,7 @@ class HunterService {
       });
       
       if (response.status !== 200) {
+        this.logger.error(`Hunter.io Email Verifier API returned status code ${response.status} for email ${email}`);
         throw new Error(`Hunter.io API returned status code ${response.status}`);
       }
       
@@ -262,15 +273,15 @@ class HunterService {
         smtp_check: data.smtp_check,
         accept_all: data.accept_all,
         block: data.block,
-        status: data.status
+        status: data.status // Hunter uses 'status', ZeroBounce uses 'sub_status'
       };
     } catch (error) {
-      logger.error('Error verifying email', { email, error: error.message });
+      this.logger.error('Error verifying email with Hunter.io', { email, error: error.message, stack: error.stack });
       
       // Return error result if API call fails
       return {
         email: email,
-        result: 'error',
+        result: 'error', // Consistent with how other services might report errors
         score: 0,
         error: error.message
       };
@@ -278,4 +289,6 @@ class HunterService {
   }
 }
 
-module.exports = new HunterService();
+module.exports = (config, logger, db) => {
+  return new HunterService(config, logger, db);
+};
