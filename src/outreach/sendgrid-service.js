@@ -5,6 +5,7 @@
 
 const sgMail = require('@sendgrid/mail');
 const sgWebhook = require('@sendgrid/webhook');
+const { withRetries } = require('../utils/custom-retry');
 // const config = require('../../config/config'); // Remove
 // const db = require('../db'); // Remove
 // const logger = require('../utils/logger'); // Remove
@@ -377,26 +378,48 @@ class SendGridService {
       }
 
       // 5. Send the email
-      this.logger.debug(`Attempting to send email via SendGrid to: ${to}`, { subject, jobId, templateId: msg.templateId });
-      const [response] = await sgMail.send(msg); // sgMail.send() returns a Promise for an array with a single response object
-      this.logger.info(`Email sent successfully to ${to}. Message ID: ${response.headers['x-message-id']}`, { jobId });
+      this.logger.debug(`Attempting to send email via SendGrid to: ${to} (will attempt retries if needed)`, { subject, jobId, templateId: msg.templateId });
+
+      const apiCall = () => sgMail.send(msg);
+      
+      // Construct retry config from global config
+      const serviceRetryOptions = { 
+        ...this.config.retryConfig.default, 
+        ...(this.config.retryConfig.services.sendGrid || {}) 
+      };
+
+      const retryConfigForWithRetries = {
+        retries: serviceRetryOptions.retries,
+        initialDelay: serviceRetryOptions.initialDelayMs,
+        maxDelay: serviceRetryOptions.maxDelayMs,
+        backoffFactor: serviceRetryOptions.backoffFactor,
+        jitter: serviceRetryOptions.jitter
+        // shouldRetry can be added here if defined in serviceRetryOptions.shouldRetry
+      };
+
+      // sgMail.send() returns a Promise for an array with a single response object
+      // So, withRetries will return that array.
+      const [response] = await withRetries(apiCall, retryConfigForWithRetries); 
+      
+      this.logger.info(`Email sent successfully to ${to} (after retries if any). Message ID: ${response.headers['x-message-id']}`, { jobId });
       
       // 6. Log the successful 'sent' event
-      // Ensure data stored is useful, sg_message_id is key.
-      // SendGrid's response object (response) contains headers, statusCode, body.
-      // The message ID is typically in response.headers['x-message-id'].
       await this.storeEmailEvent(jobId, to, 'sent', { 
-          sg_message_id: response.headers['x-message-id'], // Correct way to get message ID
+          sg_message_id: response.headers['x-message-id'],
           subject: subject,
-          template_id: msg.templateId, // Log the template used
+          template_id: msg.templateId,
           status_code: response.statusCode
       });
       
       return response; // Return the full SendGrid response object
     } catch (error) {
-      this.logger.error('Error sending email via SendGrid', { 
+      // This catch block now handles errors after all retries from withRetries are exhausted
+      // or for non-retryable errors.
+      this.logger.error('Error sending email via SendGrid (after all retries)', { 
         error: error.message, 
         errorCode: error.code, // SendGrid errors often have a code
+        // SendGrid errors might have error.response.body.errors for detailed issues
+        // errorBody: error.response && error.response.body ? error.response.body.errors : undefined,
         email: to,
         jobId,
         stack: error.stack 
@@ -410,9 +433,9 @@ class SendGridService {
           'error', 
           { 
             error: error.message,
-            code: error.code, // SendGrid error code
-            subject: subject, // Log subject of failed email
-            // statusCode: error.response?.statusCode // Already part of SendGrid error object if it's an API error
+            code: error.code,
+            // errorBody: error.response && error.response.body ? error.response.body.errors : undefined,
+            subject: subject,
           }
         );
       }

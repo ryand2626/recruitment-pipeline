@@ -4,6 +4,7 @@
  */
 
 const axios = require('axios');
+const { withRetries } = require('../utils/custom-retry');
 // const config = require('../../config/config'); // Remove
 // const db = require('../db'); // Remove
 // const logger = require('../utils/logger');   // Remove
@@ -110,6 +111,20 @@ class HunterService {
    */
   async findDomainPattern(domain) {
     this.validateApiKey();
+
+    // Construct retry config from global config
+    const serviceRetryOptions = { 
+      ...this.config.retryConfig.default, 
+      ...(this.config.retryConfig.services.hunter || {}) 
+    };
+
+    const retryConfigForWithRetries = {
+      retries: serviceRetryOptions.retries,
+      initialDelay: serviceRetryOptions.initialDelayMs,
+      maxDelay: serviceRetryOptions.maxDelayMs,
+      backoffFactor: serviceRetryOptions.backoffFactor,
+      jitter: serviceRetryOptions.jitter
+    };
     
     try {
       // Check cache first
@@ -123,17 +138,20 @@ class HunterService {
       }
       
       this.logger.info(`Fetching domain pattern for ${domain} from Hunter.io API`);
-      // If not in cache, call the API
-      const response = await axios.get(`${this.baseUrl}/domain-search`, {
-        params: {
-          domain: domain,
-          api_key: this.apiKey
-        }
+      
+      const apiCall = () => axios.get(`${this.baseUrl}/domain-search`, {
+        params: { domain: domain, api_key: this.apiKey }
       });
       
+      const response = await withRetries(apiCall, retryConfigForWithRetries);
+      
+      // After successful retries, a non-200 status should ideally be an error thrown by withRetries
+      // if not handled by shouldRetry. This check might be redundant.
       if (response.status !== 200) {
-        this.logger.error(`Hunter.io API returned status code ${response.status} for domain ${domain}`);
-        throw new Error(`Hunter.io API returned status code ${response.status}`);
+        this.logger.error(`Hunter.io API returned status code ${response.status} for domain ${domain} after retries`);
+        const error = new Error(`Hunter.io API returned status code ${response.status}`);
+        error.response = response;
+        throw error;
       }
       
       const data = response.data.data;
@@ -149,7 +167,7 @@ class HunterService {
         fromCache: false
       };
     } catch (error) {
-      this.logger.error('Error finding domain pattern with Hunter.io', { domain, error: error.message, stack: error.stack });
+      this.logger.error('Error finding domain pattern with Hunter.io after retries', { domain, errorMessage: error.message, errorStatus: error.response ? error.response.status : 'N/A', stack: error.stack });
       
       // Return empty results if API call fails
       return {
@@ -170,9 +188,24 @@ class HunterService {
    */
   async findEmail(firstName, lastName, domain) {
     this.validateApiKey();
+
+    // Construct retry config from global config
+    const serviceRetryOptions = { 
+      ...this.config.retryConfig.default, 
+      ...(this.config.retryConfig.services.hunter || {}) 
+    };
+
+    const retryConfigForWithRetries = {
+      retries: serviceRetryOptions.retries,
+      initialDelay: serviceRetryOptions.initialDelayMs,
+      maxDelay: serviceRetryOptions.maxDelayMs,
+      backoffFactor: serviceRetryOptions.backoffFactor,
+      jitter: serviceRetryOptions.jitter
+    };
     
     try {
       // First check if we have domain pattern and contacts cached
+      // Note: findDomainPattern itself is now retry-aware for its API call part.
       const domainInfo = await this.findDomainPattern(domain);
       
       // Check if we found the person in the cached contacts
@@ -197,19 +230,18 @@ class HunterService {
       }
       
       this.logger.info(`Searching email for ${firstName} ${lastName} at ${domain} via Hunter.io API`);
-      // If not found in cache, call the API
-      const response = await axios.get(`${this.baseUrl}/email-finder`, {
-        params: {
-          domain: domain,
-          first_name: firstName,
-          last_name: lastName,
-          api_key: this.apiKey
-        }
+      
+      const apiCall = () => axios.get(`${this.baseUrl}/email-finder`, {
+        params: { domain: domain, first_name: firstName, last_name: lastName, api_key: this.apiKey }
       });
       
+      const response = await withRetries(apiCall, retryConfigForWithRetries);
+
       if (response.status !== 200) {
-         this.logger.error(`Hunter.io Email Finder API returned status code ${response.status} for ${firstName} ${lastName} at ${domain}`);
-        throw new Error(`Hunter.io API returned status code ${response.status}`);
+         this.logger.error(`Hunter.io Email Finder API returned status code ${response.status} for ${firstName} ${lastName} at ${domain} after retries`);
+        const error = new Error(`Hunter.io API returned status code ${response.status}`);
+        error.response = response;
+        throw error;
       }
       
       const data = response.data.data;
@@ -223,7 +255,7 @@ class HunterService {
         fromCache: false
       };
     } catch (error) {
-      this.logger.error('Error finding email with Hunter.io', { firstName, lastName, domain, error: error.message, stack: error.stack });
+      this.logger.error('Error finding email with Hunter.io after retries', { firstName, lastName, domain, errorMessage: error.message, errorStatus: error.response ? error.response.status : 'N/A', stack: error.stack });
       
       // Return empty results if API call fails
       return {
@@ -243,19 +275,35 @@ class HunterService {
    */
   async verifyEmail(email) {
     this.validateApiKey();
+
+    // Construct retry config from global config
+    const serviceRetryOptions = { 
+      ...this.config.retryConfig.default, 
+      ...(this.config.retryConfig.services.hunter || {}) 
+    };
+
+    const retryConfigForWithRetries = {
+      retries: serviceRetryOptions.retries,
+      initialDelay: serviceRetryOptions.initialDelayMs,
+      maxDelay: serviceRetryOptions.maxDelayMs,
+      backoffFactor: serviceRetryOptions.backoffFactor,
+      jitter: serviceRetryOptions.jitter
+    };
     
     try {
       this.logger.info(`Verifying email ${email} with Hunter.io API`);
-      const response = await axios.get(`${this.baseUrl}/email-verifier`, {
-        params: {
-          email: email,
-          api_key: this.apiKey
-        }
+      
+      const apiCall = () => axios.get(`${this.baseUrl}/email-verifier`, {
+        params: { email: email, api_key: this.apiKey }
       });
+
+      const response = await withRetries(apiCall, retryConfigForWithRetries);
       
       if (response.status !== 200) {
-        this.logger.error(`Hunter.io Email Verifier API returned status code ${response.status} for email ${email}`);
-        throw new Error(`Hunter.io API returned status code ${response.status}`);
+        this.logger.error(`Hunter.io Email Verifier API returned status code ${response.status} for email ${email} after retries`);
+        const error = new Error(`Hunter.io API returned status code ${response.status}`);
+        error.response = response;
+        throw error;
       }
       
       const data = response.data.data;
@@ -276,7 +324,7 @@ class HunterService {
         status: data.status // Hunter uses 'status', ZeroBounce uses 'sub_status'
       };
     } catch (error) {
-      this.logger.error('Error verifying email with Hunter.io', { email, error: error.message, stack: error.stack });
+      this.logger.error('Error verifying email with Hunter.io after retries', { email, errorMessage: error.message, errorStatus: error.response ? error.response.status : 'N/A', stack: error.stack });
       
       // Return error result if API call fails
       return {

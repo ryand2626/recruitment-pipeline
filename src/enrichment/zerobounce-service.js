@@ -4,6 +4,7 @@
  */
 
 const axios = require('axios');
+const { withRetries } = require('../utils/custom-retry');
 // const config = require('../../config/config'); // Remove
 // const logger = require('../utils/logger');   // Remove
 
@@ -32,24 +33,40 @@ class ZeroBounceService {
    */
   async getCredits() {
     this.validateApiKey();
+
+    // Construct retry config from global config
+    const serviceRetryOptions = { 
+      ...this.config.retryConfig.default, 
+      ...(this.config.retryConfig.services.zeroBounce || {}) 
+    };
+
+    const retryConfigForWithRetries = {
+      retries: serviceRetryOptions.retries,
+      initialDelay: serviceRetryOptions.initialDelayMs,
+      maxDelay: serviceRetryOptions.maxDelayMs,
+      backoffFactor: serviceRetryOptions.backoffFactor,
+      jitter: serviceRetryOptions.jitter
+    };
     
     try {
-      const response = await axios.get(`${this.baseUrl}/getcredits`, {
-        params: {
-          api_key: this.apiKey
-        }
+      const apiCall = () => axios.get(`${this.baseUrl}/getcredits`, {
+        params: { api_key: this.apiKey }
       });
+
+      const response = await withRetries(apiCall, retryConfigForWithRetries);
       
       if (response.status !== 200) {
-        this.logger.error(`ZeroBounce API /getcredits returned status code ${response.status}`);
-        throw new Error(`ZeroBounce API returned status code ${response.status}`);
+        this.logger.error(`ZeroBounce API /getcredits returned status code ${response.status} after retries`);
+        const error = new Error(`ZeroBounce API returned status code ${response.status}`);
+        error.response = response;
+        throw error;
       }
       
       this.logger.debug(`ZeroBounce credits remaining: ${response.data.Credits}`);
       return response.data;
     } catch (error) {
-      this.logger.error('Error checking ZeroBounce credits', { error: error.message, stack: error.stack });
-      throw error;
+      this.logger.error('Error checking ZeroBounce credits after retries', { errorMessage: error.message, errorStatus: error.response ? error.response.status : 'N/A', stack: error.stack });
+      throw error; // Propagate error as per original logic
     }
   }
 
@@ -71,21 +88,39 @@ class ZeroBounceService {
         error: 'Invalid email format'
       };
     }
+
+    // Construct retry config from global config
+    const serviceRetryOptions = { 
+      ...this.config.retryConfig.default, 
+      ...(this.config.retryConfig.services.zeroBounce || {}) 
+    };
+
+    const retryConfigForWithRetries = {
+      retries: serviceRetryOptions.retries,
+      initialDelay: serviceRetryOptions.initialDelayMs,
+      maxDelay: serviceRetryOptions.maxDelayMs,
+      backoffFactor: serviceRetryOptions.backoffFactor,
+      jitter: serviceRetryOptions.jitter
+    };
     
     try {
       this.logger.info(`Validating email with ZeroBounce: ${email}`);
       
-      const response = await axios.get(`${this.baseUrl}/validate`, {
+      const apiCall = () => axios.get(`${this.baseUrl}/validate`, {
         params: {
           api_key: this.apiKey,
           email: email,
           ip_address: '' // As per original code, IP address is optional and can be empty
         }
       });
+
+      const response = await withRetries(apiCall, retryConfigForWithRetries);
       
       if (response.status !== 200) {
-        this.logger.error(`ZeroBounce API /validate returned status code ${response.status} for email ${email}`);
-        throw new Error(`ZeroBounce API returned status code ${response.status}`);
+        this.logger.error(`ZeroBounce API /validate returned status code ${response.status} for email ${email} after retries`);
+        const error = new Error(`ZeroBounce API returned status code ${response.status}`);
+        error.response = response;
+        throw error;
       }
       
       const result = response.data;
@@ -122,9 +157,9 @@ class ZeroBounceService {
       return {
         address: email,
         status: 'error',
-        sub_status: 'api_error',
+        sub_status: 'api_error', // Consistent sub_status for API related errors
         valid: false,
-        error: error.message
+        error: error.message // Original error message
       };
     }
   }
@@ -159,33 +194,56 @@ class ZeroBounceService {
     
     // ZeroBounce limits batch size (original code mentioned 100)
     const maxBatchSize = this.config.enrichment?.zeroBounceMaxBatchSize || 100;
-    
+    let currentBatch = emails; // Use a different variable for the potentially sliced batch
     if (emails.length > maxBatchSize) {
       this.logger.warn(`ZeroBounce batch size exceeds maximum of ${maxBatchSize}. Only validating first ${maxBatchSize} emails.`);
-      emails = emails.slice(0, maxBatchSize);
+      currentBatch = emails.slice(0, maxBatchSize);
     }
+
+    // Construct retry config from global config
+    const serviceRetryOptions = { 
+      ...this.config.retryConfig.default, 
+      ...(this.config.retryConfig.services.zeroBounce || {}) 
+    };
+
+    const retryConfigForWithRetries = {
+      retries: serviceRetryOptions.retries,
+      initialDelay: serviceRetryOptions.initialDelayMs,
+      maxDelay: serviceRetryOptions.maxDelayMs,
+      backoffFactor: serviceRetryOptions.backoffFactor,
+      jitter: serviceRetryOptions.jitter
+    };
     
     try {
-      this.logger.info(`Batch validating ${emails.length} emails with ZeroBounce`);
+      this.logger.info(`Batch validating ${currentBatch.length} emails with ZeroBounce`);
       
       const apiUrl = `${this.baseUrl}/validatebatch`; // Endpoint for batch
       
-      const batchData = emails.map(email => ({
+      const batchData = currentBatch.map(email => ({
         email_address: email,
         ip_address: '' // Optional, can be empty
       }));
       
-      const response = await axios.post(apiUrl, { // POST request for batch
+      const apiCall = () => axios.post(apiUrl, { // POST request for batch
         api_key: this.apiKey,
         email_batch: batchData
       });
+
+      const response = await withRetries(apiCall, retryConfigForWithRetries);
       
       if (response.status !== 200) {
-        this.logger.error(`ZeroBounce API /validatebatch returned status code ${response.status}`);
-        throw new Error(`ZeroBounce API returned status code ${response.status}`);
+        this.logger.error(`ZeroBounce API /validatebatch returned status code ${response.status} after retries`);
+        const error = new Error(`ZeroBounce API returned status code ${response.status}`);
+        error.response = response;
+        throw error;
       }
       
       // Process the results and add the 'valid' flag
+      // Ensure we are processing results for the emails that were actually sent (currentBatch)
+      // Note: The response from ZeroBounce batch might not perfectly align one-to-one by order
+      // if some emails in the original batch were malformed from ZB's perspective before processing.
+      // However, the typical case is they are returned in order or identifiable.
+      // Assuming `response.data.email_batch` corresponds to `currentBatch`.
       const results = response.data.email_batch.map(result => ({
         address: result.address, // Use address from response
         status: result.status,
@@ -198,15 +256,15 @@ class ZeroBounceService {
       
       return results;
     } catch (error) {
-      this.logger.error('Error batch validating emails with ZeroBounce', { error: error.message, stack: error.stack });
+      this.logger.error('Error batch validating emails with ZeroBounce after retries', { errorMessage: error.message, errorStatus: error.response ? error.response.status : 'N/A', stack: error.stack });
       
-      // Return error results for all emails in the batch
-      return emails.map(email => ({
+      // Return error results for all emails in the batch that was attempted (currentBatch)
+      return currentBatch.map(email => ({
         address: email,
         status: 'error',
-        sub_status: 'batch_api_error',
+        sub_status: 'batch_api_error', // Consistent sub_status
         valid: false,
-        error: error.message
+        error: error.message // Original error message
       }));
     }
   }

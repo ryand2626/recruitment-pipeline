@@ -5,6 +5,7 @@
 
 const axios = require('axios');
 const db = require('../db');
+const { withRetries } = require('../../utils/custom-retry');
 
 module.exports = (config, logger) => {
   const apiKey = config.apiKeys.serpApi;
@@ -28,37 +29,81 @@ module.exports = (config, logger) => {
    * @param {number} page - Page number (0-indexed)
    * @returns {Promise<Object>} SerpAPI response
    */
-  async function searchJobs(jobTitle, location = 'United States', page = 0) {
-    validateApiKey();
+  const baseUrl = 'https://serpapi.com/search';
+  const jobTitles = config.jobTitles;
 
-    try {
-      logger.info(`Searching for "${jobTitle}" jobs in ${location}, page ${page} via SerpAPI`);
-      
+  // Note: config is directly available in this scope, not this.config
+  const serviceRetryOptions = { 
+    ...config.retryConfig.default, 
+    ...(config.retryConfig.services.serpApi || {}) 
+  };
+
+  const retryConfigForWithRetries = {
+    retries: serviceRetryOptions.retries,
+    initialDelay: serviceRetryOptions.initialDelayMs,
+    maxDelay: serviceRetryOptions.maxDelayMs,
+    backoffFactor: serviceRetryOptions.backoffFactor,
+    jitter: serviceRetryOptions.jitter
+  };
+
+  /**
+   * Validate that the API key is set
+   * @throws {Error} If API key is not set
+   */
+  function validateApiKey() {
+    if (!apiKey) {
+      throw new Error('SerpAPI key is not set. Please set SERPAPI_KEY in your environment variables.');
+    }
+  }
+
+  /**
+   * Search for jobs using the SerpAPI Google Jobs endpoint (this is the equivalent of scrapeSerpApiPage)
+   * @param {string} jobTitle - Job title to search for
+   * @param {number} location - Location to search in
+   * @param {number} page - Page number (0-indexed)
+   * @returns {Promise<Object>} SerpAPI response data
+   */
+  async function searchJobs(jobTitle, location = 'United States', page = 0) {
+    validateApiKey(); // Stays at the top
+
+    const apiCall = () => { // Define the axios call as a function
       const params = {
         engine: 'google_jobs',
         q: jobTitle,
         location: location,
         hl: 'en',
-        api_key: apiKey,
-        start: page * 10 // SerpAPI uses 10 jobs per page
+        api_key: apiKey, // Ensure apiKey is accessible here
+        start: page * 10
       };
+      return axios.get(baseUrl, { params }); // Ensure baseUrl is accessible
+    };
 
-      const response = await axios.get(baseUrl, { params });
+    try {
+      logger.info(`Searching for "${jobTitle}" jobs in ${location}, page ${page} via SerpAPI`);
       
-      if (response.status !== 200) {
-        throw new Error(`SerpAPI returned status code ${response.status}`);
-      }
+      const responseData = await withRetries(apiCall, retryConfigForWithRetries); // Pass the new config
+      
+      // Note: withRetries returns the result of asyncFn, which for axios is the response object.
+      // So, responseData here will be the axios response. Access data with responseData.data.
+      // The original code directly used 'response' as the axios response.
+      
+      // The original code checked response.status !== 200 and threw an error.
+      // The default shouldRetry in custom-retry.js handles non-2xx statuses by retrying or throwing.
+      // So, if withRetries resolves, it means we got a successful response (typically 2xx).
+      // Thus, the `if (response.status !== 200)` check might be redundant if withRetries
+      // is configured to only resolve on success. Assuming default shouldRetry.
+      // If we reach here, it's a success.
 
-      logger.info(`Found ${response.data.jobs_results?.length || 0} jobs for "${jobTitle}" via SerpAPI`);
-      return response.data;
+      logger.info(`Found ${responseData.data.jobs_results?.length || 0} jobs for "${jobTitle}" via SerpAPI`);
+      return responseData.data; // Return the data part of the response
     } catch (error) {
-      logger.error('Error searching for jobs with SerpAPI', {
+      logger.error('Error searching for jobs with SerpAPI (after retries)', { // Update log message
         jobTitle,
         location,
         page,
-        error: error.message
+        error: error.message // error.message should be sufficient
       });
-      throw error;
+      throw error; // Re-throw error as per original logic
     }
   }
 

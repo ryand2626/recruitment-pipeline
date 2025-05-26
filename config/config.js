@@ -87,5 +87,33 @@ module.exports = {
   n8n: {
     url: `http://${process.env.N8N_HOST || 'localhost'}:5678`,
     workflowId: process.env.N8N_WORKFLOW_ID || ''
+  },
+
+  // Retry Configuration for API calls
+  retryConfig: {
+    default: {
+      retries: 3,
+      initialDelayMs: 1000, // Use 'Ms' suffix for clarity
+      maxDelayMs: 30000,    // 30 seconds max delay
+      backoffFactor: 2,
+      jitter: true
+      // shouldRetry: undefined, // Path to a custom retry function file if needed globally
+    },
+    services: {
+      clearbit: {
+        // inherits from default, can override specific properties
+        // e.g., initialDelayMs: 1500 
+      },
+      hunter: {}, // Will use default
+      zeroBounce: {}, // Will use default
+      serpApi: {
+        initialDelayMs: 2000 // As previously set for SerpAPI
+      },
+      sendGrid: {
+        initialDelayMs: 5000 // As previously set for SendGrid
+        // We might also want to add a custom shouldRetry function path here later if needed
+        // e.g., shouldRetry: './custom-should-retry-sendgrid.js' 
+      }
+    }
   }
 };
