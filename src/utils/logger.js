@@ -38,8 +38,38 @@ const logger = winston.createLogger({
 if (process.env.NODE_ENV !== 'production') {
   logger.add(new winston.transports.Console({
     format: winston.format.combine(
-      winston.format.colorize(),
-      winston.format.simple()
+      winston.format.colorize({ all: true }),
+      winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }), // Add timestamp to console
+      winston.format.errors({ stack: true }), // Ensure stack traces are available for console
+      winston.format.printf(info => {
+        const { timestamp, level, message, service, stack, ...rest } = info;
+        
+        let log = `${timestamp} [${service || 'app'}] ${level}: ${message}`;
+        
+        // Collect remaining properties (context from child loggers or direct metadata)
+        const contextForLog = {};
+        for (const key in rest) {
+          // Ensure property is own and not a symbol (Winston uses symbols for internal properties)
+          if (Object.prototype.hasOwnProperty.call(rest, key) && typeof rest[key] !== 'symbol') {
+            // Exclude 'splat' if it's directly on 'rest', though it's usually handled by winston.format.splat() earlier
+            // and its results merged or used.
+            // Also, winston.format.metadata() could gather all metadata under a 'metadata' key.
+            // Here, we assume 'rest' contains what's left after known properties are destructured.
+             if (key !== 'splat' && key !== Symbol.for('splat')?.toString()) { // Check against actual symbol description if possible
+                contextForLog[key] = rest[key];
+            }
+          }
+        }
+        
+        if (Object.keys(contextForLog).length > 0) {
+          log += ` ${JSON.stringify(contextForLog)}`;
+        }
+        
+        if (stack) {
+          log += `\n${stack}`;
+        }
+        return log;
+      })
     ),
   }));
 }
