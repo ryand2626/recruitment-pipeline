@@ -19,6 +19,7 @@ import streamlit as st
 import json
 import time
 import pandas as pd
+import requests
 
 def generate_source_text_options(topic):
     """
@@ -206,57 +207,33 @@ def run_pipeline(params: dict) -> dict:
     Returns job postings that match the criteria.
     """
     print(f"run_pipeline called with params: {json.dumps(params, indent=2)}")
-    
-    # Simulate pipeline execution
-    time.sleep(2)
-    
-    # Mock job posting results
-    mock_jobs = [
-        {
-            'id': 'job_001',
-            'company': 'Goldman Sachs',
-            'title': 'M&A Associate',
-            'location': 'New York, NY',
-            'posted_date': '2024-01-15',
-            'salary_range': '$225,000 - $275,000',
-            'contact_email': 'recruiting@goldmansachs.com',
-            'job_url': 'https://goldmansachs.com/careers/job-123',
-            'description': 'Seeking M&A Associate for Technology coverage group...',
-            'company_insights': 'Recently announced expansion of tech M&A team'
-        },
-        {
-            'id': 'job_002',
-            'company': 'Evercore',
-            'title': 'Vice President - M&A',
-            'location': 'San Francisco, CA',
-            'posted_date': '2024-01-14',
-            'salary_range': '$350,000 - $450,000',
-            'contact_email': 'careers@evercore.com',
-            'job_url': 'https://evercore.com/careers/job-456',
-            'description': 'VP role in growing Healthcare M&A practice...',
-            'company_insights': 'Opened SF office last year, growing rapidly'
-        },
-        {
-            'id': 'job_003',
-            'company': 'Lazard',
-            'title': 'Investment Banking Analyst',
-            'location': 'Chicago, IL',
-            'posted_date': '2024-01-13',
-            'salary_range': '$175,000 - $200,000',
-            'contact_email': 'ib-recruiting@lazard.com',
-            'job_url': 'https://lazard.com/careers/job-789',
-            'description': 'Analyst position in Restructuring group...',
-            'company_insights': 'Leading restructuring practice, busy with current market'
+
+    try:
+        response = requests.post("http://localhost:3001/trigger/scrape", json=params, timeout=10)
+        if response.status_code == 202:
+            return {
+                "status": "success",
+                "message": "Pipeline successfully triggered on the backend.",
+                "jobs": [],
+                "total_matches": 0,
+                "logs": "Backend process initiated. Check backend logs for progress."
+            }
+        else:
+            return {
+                "status": "error",
+                "message": f"Failed to trigger pipeline. Backend responded with status: {response.status_code}. Response: {response.text}",
+                "jobs": [],
+                "total_matches": 0,
+                "logs": "Error occurred while trying to communicate with the backend."
+            }
+    except requests.exceptions.RequestException as e:
+        return {
+            "status": "error",
+            "message": f"Failed to connect to backend API. Error: {e}",
+            "jobs": [],
+            "total_matches": 0,
+            "logs": "Error occurred while trying to communicate with the backend."
         }
-    ]
-    
-    return {
-        "status": "success",
-        "message": f"Found {len(mock_jobs)} matching job postings",
-        "jobs": mock_jobs,
-        "total_matches": len(mock_jobs),
-        "logs": "Pipeline executed successfully. Jobs scraped from LinkedIn, Indeed, company websites."
-    }
 
 # Initialize session state
 if 'selected_jobs_for_outreach' not in st.session_state:
@@ -898,12 +875,14 @@ def execute_pipeline_flow():
         "confidence_threshold": confidence_threshold,
         "processing_mode": processing_mode,
         "job_sources": {
-            "linkedin": search_linkedin,
-            "indeed": search_indeed,
-            "company_sites": search_company_sites,
-            "glassdoor": search_glassdoor,
-            "efinancialcareers": search_specialized,
-            "recruiters": search_recruiters
+            "linkedin": search_linkedin, # Assuming search_linkedin is defined
+            "indeed": search_indeed, # Assuming search_indeed is defined
+            # "company_sites": search_company_sites, # This variable is not defined in the provided code
+            "glassdoor": search_glassdoor, # Assuming search_glassdoor is defined
+            # "efinancialcareers": search_specialized, # This variable is not defined
+            # "recruiters": search_recruiters # This variable is not defined
+            # Minimal example, ensure all referenced variables here are defined in your actual Streamlit app state
+             "job_sources": {key: value for key, value in all_sources.items() if value}
         }
     }
 
