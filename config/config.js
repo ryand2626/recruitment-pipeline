@@ -9,8 +9,8 @@ require('dotenv').config();
 module.exports = {
   // Database Configuration
   database: {
-    host: process.env.POSTGRES_HOST || 'postgres',
-    port: parseInt(process.env.POSTGRES_PORT || '5432', 10),
+    host: process.env.POSTGRES_HOST || 'localhost',
+    port: parseInt(process.env.POSTGRES_PORT || '5435', 10),
     user: process.env.POSTGRES_USER || 'jobsadmin',
     password: process.env.POSTGRES_PASSWORD || 'X2tP9vR7sQ4mE5jL8kF3wA6bC1dN0pZ',
     database: process.env.POSTGRES_DB || 'jobspipeline',
