@@ -136,10 +136,16 @@ function setupRoutes() {
       
       // Extract options from request body
       const options = {
-        location: req.body.location || 'United States',
+        location: req.body.location || 'United States', // This might be overridden by target_states
         maxItems: req.body.maxItems || 50,
         pages: req.body.pages || 3,
-        minResults: req.body.minResults || 10
+        minResults: req.body.minResults || 10,
+        source_text: req.body.source_text,
+        target_job_titles: req.body.target_job_titles,
+        target_states: req.body.target_states,
+        confidence_threshold: req.body.confidence_threshold,
+        processing_mode: req.body.processing_mode,
+        job_sources: req.body.job_sources
       };
       
       // Run scraping and return results immediately
@@ -398,11 +404,17 @@ async function runScraping(options = {}) {
   try {
     // Use smart scraper with default options
     const scrapingOptions = {
-      location: options.location || 'United States',
-      maxItems: options.maxItems || 50,
-      pages: options.pages || 3,
-      minResults: options.minResults || 10,
-      ...options
+      location: options.location || 'United States', // Default, might be overridden by target_states
+      maxItems: options.maxItems || 50, // Default
+      pages: options.pages || 3, // Default
+      minResults: options.minResults || 10, // Default
+      source_text: options.source_text,
+      target_job_titles: options.target_job_titles,
+      target_states: options.target_states,
+      confidence_threshold: options.confidence_threshold,
+      processing_mode: options.processing_mode,
+      job_sources: options.job_sources,
+      ...options // Spread any other ad-hoc options from req.body
     };
     
     const results = await scrapersService.smartScrapeJobs(scrapingOptions);
