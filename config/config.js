@@ -148,20 +148,18 @@ module.exports = {
     },
     useApify: process.env.USE_APIFY === 'true' || true,
     
-    // Comprehensive actor configuration for job scraping
+    // Working Apify actors for job scraping
     actors: [
       {
-        actorId: "apify/indeed-scraper",
+        actorId: "borderline/indeed-scraper",
         name: "Indeed Job Scraper",
-        description: "Scrapes job listings from Indeed with comprehensive data extraction.",
+        description: "Fast and reliable Indeed Job Scraper with advanced filters.",
         priority: 1, // Primary scraper
         defaultInput: {
-          position: "{jobTitle}",
+          keyword: "{jobTitle}",
           location: "United States",
           maxItems: 50,
-          parseCompanyDetails: true,
-          saveHtml: false,
-          saveMarkdown: false
+          datePosted: "7"
         },
         overridesByJobTitle: {
           "M&A Associate": {
@@ -175,59 +173,52 @@ module.exports = {
         }
       },
       {
-        actorId: "apify/linkedin-jobs-scraper",
+        actorId: "curious_coder/linkedin-jobs-scraper",
         name: "LinkedIn Jobs Scraper",
-        description: "Scrapes job postings from LinkedIn with contact information.",
+        description: "Scrapes job postings from LinkedIn with company details.",
         priority: 2,
         defaultInput: {
-          keywords: "{jobTitle}",
+          keyword: "{jobTitle}",
           location: "United States",
           maxItems: 50,
-          datePosted: "week",
-          experienceLevel: ["mid", "senior", "director"],
-          includeCompanyData: true
+          datePosted: "week"
         },
         overridesByJobTitle: {
           "Managing Director - Investment Banking": {
-            experienceLevel: ["director", "executive"],
-            maxItems: 30
+            maxItems: 30,
+            location: "New York, NY"
           },
           "Vice President M&A": {
-            experienceLevel: ["senior", "director"],
+            maxItems: 40,
+            location: "New York, NY"
+          }
+        }
+      },
+      {
+        actorId: "websift/seek-job-scraper",
+        name: "Seek Job Scraper",
+        description: "Scrapes job listings from seek.com.au for Australian market.",
+        priority: 3,
+        defaultInput: {
+          keyword: "{jobTitle}",
+          location: "Australia",
+          maxItems: 30
+        },
+        overridesByJobTitle: {
+          "Corporate Finance": {
+            location: "Sydney, Australia",
             maxItems: 40
           }
         }
       },
       {
-        actorId: "apify/google-jobs-scraper",
-        name: "Google Jobs Scraper",
-        description: "Scrapes Google Jobs results - replacement for SerpAPI.",
-        priority: 3,
-        defaultInput: {
-          queries: ["{jobTitle} United States"],
-          maxPagesPerQuery: 3,
-          resultsPerPage: 20,
-          includeCompanyInfo: true,
-          extractEmails: true
-        },
-        overridesByJobTitle: {
-          "Corporate Finance": {
-            queries: ["Corporate Finance United States", "Corp Finance United States"],
-            maxPagesPerQuery: 2
-          }
-        }
-      },
-      {
-        actorId: "apify/glassdoor-scraper",
-        name: "Glassdoor Job Scraper",
-        description: "Scrapes Glassdoor for job listings with salary and company insights.",
+        actorId: "code_crafter/apollo-io-scraper",
+        name: "Apollo.io Contact Scraper",
+        description: "Scrapes contact information from Apollo.io for lead enrichment.",
         priority: 4,
         defaultInput: {
-          keyword: "{jobTitle}",
-          location: "United States",
-          maxItems: 30,
-          includeSalaryData: true,
-          includeCompanyReviews: false
+          searchUrl: "https://app.apollo.io/",
+          maxItems: 50
         }
       },
       {
@@ -244,34 +235,18 @@ module.exports = {
           maxRequestsPerCrawl: 100,
           maxConcurrency: 5
         }
-      },
-      {
-        actorId: "apify/email-extractor",
-        name: "Email Contact Extractor",
-        description: "Extracts contact emails from company websites - replacement for Hunter.io.",
-        priority: 6,
-        defaultInput: {
-          startUrls: ["{companyWebsite}"],
-          maxRequestsPerCrawl: 50,
-          emailPatterns: [
-            "hr@{domain}",
-            "careers@{domain}",
-            "recruiting@{domain}",
-            "jobs@{domain}"
-          ]
-        }
       }
     ],
 
     // Fallback configuration when primary APIs are rate-limited
     fallbackStrategies: {
       jobScraping: {
-        primary: ["apify/indeed-scraper", "apify/linkedin-jobs-scraper"],
-        secondary: ["apify/google-jobs-scraper", "apify/glassdoor-scraper"],
+        primary: ["borderline/indeed-scraper", "curious_coder/linkedin-jobs-scraper"],
+        secondary: ["websift/seek-job-scraper"],
         tertiary: ["apify/web-scraper"]
       },
       contactEnrichment: {
-        primary: ["apify/email-extractor"],
+        primary: ["code_crafter/apollo-io-scraper"],
         secondary: ["apify/web-scraper"],
         fallbackToManual: true
       }
