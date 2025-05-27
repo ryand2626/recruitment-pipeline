@@ -260,9 +260,11 @@ The pipeline runs on an automatic schedule as follows:
 
 You can also trigger individual steps manually via API endpoints:
 
-- Scraping: `POST http://localhost:3000/trigger/scrape`
-- Enrichment: `POST http://localhost:3000/trigger/enrich`
-- Outreach: `POST http://localhost:3000/trigger/outreach`
+- Scraping: `POST http://localhost:3001/trigger/scrape`
+- Enrichment: `POST http://localhost:3001/trigger/enrich`
+- Outreach: `POST http://localhost:3001/trigger/outreach`
+
+The Streamlit user interface also uses the `/trigger/scrape` endpoint to initiate the scraping process.
 
 #### Health Check
 
