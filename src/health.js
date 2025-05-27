@@ -14,7 +14,7 @@ class HealthCheck {
     // Database health check
     this.checks.set('database', async () => {
       try {
-        const db = container.resolve('db');
+        const db = container.get('db');
         await db.query('SELECT 1');
         return { status: 'healthy', message: 'Database connection successful' };
       } catch (error) {
@@ -25,7 +25,7 @@ class HealthCheck {
     // API keys validation
     this.checks.set('api_keys', async () => {
       try {
-        const config = container.resolve('config');
+        const config = container.get('config');
         const missingKeys = [];
         
         if (!config.apiKeys.serpApi) missingKeys.push('SerpAPI');
@@ -48,7 +48,7 @@ class HealthCheck {
     // Email configuration check
     this.checks.set('email_config', async () => {
       try {
-        const config = container.resolve('config');
+        const config = container.get('config');
         
         if (!config.email.fromEmail || !config.email.fromName) {
           return { 
