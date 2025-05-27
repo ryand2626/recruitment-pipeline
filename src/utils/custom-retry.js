@@ -41,7 +41,6 @@ async function withRetries(asyncFn, config) {
         return true;
     }
 
-
     if (error.response) {
       // Retry on specific HTTP status codes
       const retryableStatusCodes = [429, 500, 502, 503, 504];
@@ -62,7 +61,7 @@ async function withRetries(asyncFn, config) {
         throw error;
       }
 
-      let delay = Math.min(maxDelay, initialDelay * Math.pow(backoffFactor, attempts -1));
+      let delay = Math.min(maxDelay, initialDelay * Math.pow(backoffFactor, attempts - 1));
 
       if (jitter) {
         const jitterAmount = delay * 0.2; // +/- 20%
@@ -71,12 +70,10 @@ async function withRetries(asyncFn, config) {
         delay = Math.max(0, delay); // Ensure delay is not negative
       }
       
-      currentDelay = delay; // Update currentDelay for the next potential calculation (though not strictly needed here as `delay` is recalculated each time)
+      currentDelay = delay; // Update currentDelay for the next potential calculation
 
-
-      if (process.env.NODE_ENV !== 'test') { // Avoid actual delays in test environment unless specifically testing delays
-        await new Promise(resolve => setTimeout(resolve, Math.max(0, delay))); // ensure delay is not negative
-      }
+      // Always use setTimeout - Jest's fake timers will handle this properly in tests
+      await new Promise(resolve => setTimeout(resolve, Math.max(0, delay)));
     }
   }
   // This line should theoretically be unreachable if retries >= 0,

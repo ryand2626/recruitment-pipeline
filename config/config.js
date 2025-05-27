@@ -51,11 +51,11 @@ module.exports = {
   
   // Email Configuration
   email: {
-    fromEmail: process.env.FROM_EMAIL || 'outreach@yourdomain.com',
-    fromName: process.env.FROM_NAME || 'Recruiting Team',
+    fromEmail: process.env.FROM_EMAIL || 'jr@robertsonwright.co.uk',
+    fromName: process.env.FROM_NAME || 'Joe Robertson',
     templateId: process.env.SENDGRID_TEMPLATE_ID || '',
-    unsubscribeUrl: process.env.UNSUBSCRIBE_URL || 'https://yourdomain.com/unsubscribe',
-    physicalAddress: process.env.PHYSICAL_ADDRESS || '123 Main St, Anytown, USA',
+    unsubscribeUrl: process.env.UNSUBSCRIBE_URL || 'https://robertsonwright.co.uk/unsubscribe',
+    physicalAddress: process.env.PHYSICAL_ADDRESS || 'Robertson Wright, London, UK',
     rateLimitPerMinute: parseInt(process.env.EMAIL_RATE_LIMIT || '100', 10),
     
     // Compliance settings

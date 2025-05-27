@@ -1,6 +1,6 @@
 const axios = require('axios');
 const sendgridMail = require('@sendgrid/mail');
-const config = require('../../config/config.js');
+const config = require('../config/config.js');
 const ApifyService = require('../src/scrapers/apify-service.js'); // Added ApifyService
 const yargs = require('yargs/yargs'); // Added yargs
 const { hideBin } = require('yargs/helpers'); // Added yargs helper
@@ -67,7 +67,7 @@ async function testHunterAPI() {
 async function testZeroBounceAPI() {
   console.log('\nTesting ZeroBounce API...');
   try {
-    const response = await axios.get('https://api.zerobounce.net/v2/credits', {
+    const response = await axios.get('https://api.zerobounce.net/v2/getcredits', {
       params: {
         api_key: config.apiKeys.zeroBounce
       }
@@ -85,18 +85,26 @@ async function testZeroBounceAPI() {
 async function testSendGridAPI() {
   console.log('\nTesting SendGrid API...');
   try {
+    // Test with a simple API call to check API key validity
+    // Using the mail send endpoint but with validation only
     const msg = {
       to: 'test@example.com',
-      from: config.email.fromEmail || 'test@example.com',
-      subject: 'SendGrid Test',
+      from: config.email.fromEmail,
+      subject: 'SendGrid API Test',
       text: 'This is a test email from SendGrid',
       html: '<strong>This is a test email from SendGrid</strong>',
+      mail_settings: {
+        sandbox_mode: {
+          enable: true // This prevents actual sending
+        }
+      }
     };
     
-    // We'll just validate the API key by checking the user's account
-    const response = await sendgridMail.send(msg, false);
+    const response = await sendgridMail.send(msg);
     console.log('✅ SendGrid API is working');
-    console.log('  Note: Test email was not actually sent (commented out for safety)');
+    console.log(`  Status: ${response[0].statusCode}`);
+    console.log(`  From Email: ${config.email.fromEmail} (verified)`);
+    console.log('  Note: Test email sent in sandbox mode (not actually delivered)');
     return true;
   } catch (error) {
     if (error.response) {

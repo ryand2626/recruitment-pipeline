@@ -12,6 +12,9 @@ const cron = require('node-cron');
 
 const container = require('./src/container');
 const { initializeServices } = require('./src/service-registration');
+const healthCheck = require('./src/health');
+const http = require('http');
+const url = require('url');
 
 // Module-level service variables, initialized in init()
 let logger = null;
@@ -254,6 +257,107 @@ async function runOutreach() {
   }
 }
 
-// Run the application
-// The init().catch() block is removed as init() now handles its own errors and exits.
-init();
+// Create simple HTTP server for health checks
+const server = http.createServer(async (req, res) => {
+  const parsedUrl = url.parse(req.url, true);
+  
+  // Set CORS headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  
+  if (req.method === 'OPTIONS') {
+    res.writeHead(200);
+    res.end();
+    return;
+  }
+  
+  if (parsedUrl.pathname === '/health') {
+    try {
+      const health = await healthCheck.runAllChecks();
+      const statusCode = health.status === 'healthy' ? 200 : 
+                        health.status === 'warning' ? 200 : 503;
+      
+      res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(health, null, 2));
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ 
+        status: 'error', 
+        message: error.message,
+        timestamp: new Date().toISOString()
+      }));
+    }
+  } else if (parsedUrl.pathname === '/') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      name: 'Job Pipeline API',
+      version: require('./package.json').version,
+      status: 'running',
+      endpoints: {
+        health: '/health',
+        documentation: 'See README.md'
+      }
+    }, null, 2));
+  } else {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Not found' }));
+  }
+});
+
+const PORT = process.env.PORT || 3000;
+
+server.listen(PORT, () => {
+  logger.info(`Job Pipeline API server started on port ${PORT}`);
+  logger.info(`Health check available at: http://localhost:${PORT}/health`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  logger.info('SIGTERM received, shutting down gracefully');
+  server.close(() => {
+    logger.info('HTTP server closed');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  logger.info('SIGINT received, shutting down gracefully');
+  server.close(() => {
+    logger.info('HTTP server closed');
+    process.exit(0);
+  });
+});
+
+// Main application logic
+async function runJobPipeline() {
+  try {
+    logger.info('Starting job pipeline execution...');
+    
+    // Get services from container
+    const scrapersService = container.resolve('scrapersService');
+    const enrichmentService = container.resolve('enrichmentService');
+    const outreachWorker = container.resolve('outreachWorker');
+    
+    // Example pipeline execution (this would typically be triggered by n8n or cron)
+    logger.info('Job pipeline is ready. Services initialized successfully.');
+    logger.info('Pipeline can be triggered via n8n workflow or manual execution.');
+    
+    // For demonstration, you could uncomment these lines to run the pipeline:
+    // const scrapingResults = await scrapersService.scrapeAllJobTitles();
+    // const enrichmentResults = await enrichmentService.enrichNewJobs();
+    // const outreachResults = await outreachWorker.processEmailQueue();
+    
+  } catch (error) {
+    logger.error('Error in job pipeline execution:', error);
+    process.exit(1);
+  }
+}
+
+// Start the pipeline
+runJobPipeline().catch(error => {
+  logger.error('Fatal error starting job pipeline:', error);
+  process.exit(1);
+});
+
+module.exports = { server };

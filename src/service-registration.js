@@ -2,7 +2,7 @@
 const container = require('./container');
 const config = require('../config/config'); // Adjusted path
 const logger = require('./utils/logger');   // Adjusted path
-const db = require('../db/index'); // Import db instance
+const db = require('./db/index'); // Fixed path - db is in src/db
 
 // Import factory functions for scrapers
 const createSerpApiClient = require('./scrapers/serpapi-client');

@@ -5,30 +5,10 @@
 
 const axios = require('axios');
 const db = require('../db');
-const { withRetries } = require('../../utils/custom-retry');
+const { withRetries } = require('../utils/custom-retry');
 
 module.exports = (config, logger) => {
   const apiKey = config.apiKeys.serpApi;
-  const baseUrl = 'https://serpapi.com/search';
-  const jobTitles = config.jobTitles;
-
-  /**
-   * Validate that the API key is set
-   * @throws {Error} If API key is not set
-   */
-  function validateApiKey() {
-    if (!apiKey) {
-      throw new Error('SerpAPI key is not set. Please set SERPAPI_KEY in your environment variables.');
-    }
-  }
-
-  /**
-   * Search for jobs using the SerpAPI Google Jobs endpoint (this is the equivalent of scrapeSerpApiPage)
-   * @param {string} jobTitle - Job title to search for
-   * @param {number} location - Location to search in
-   * @param {number} page - Page number (0-indexed)
-   * @returns {Promise<Object>} SerpAPI response
-   */
   const baseUrl = 'https://serpapi.com/search';
   const jobTitles = config.jobTitles;
 

@@ -4,7 +4,7 @@
  */
 
 const sgMail = require('@sendgrid/mail');
-const sgWebhook = require('@sendgrid/webhook');
+const sgWebhook = require('@sendgrid/eventwebhook');
 const { withRetries } = require('../utils/custom-retry');
 // const config = require('../../config/config'); // Remove
 // const db = require('../db'); // Remove
