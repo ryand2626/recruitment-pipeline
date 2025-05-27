@@ -22,7 +22,10 @@ class SendGridService {
     this.rateLimit = this.config.email.rateLimitPerMinute;
     this.fromEmail = this.config.email.fromEmail;
     this.fromName = this.config.email.fromName;
-    this.templateId = this.config.email.templateId; // Ensure this is used or remove if not
+    this.templateId = this.config.email.templateId;
+    if (!this.templateId) {
+      this.logger.warn('SendGrid templateId is not set in the configuration. Email sending will likely fail if text/html content is not explicitly provided.');
+    }
     this.unsubscribeUrl = this.config.email.unsubscribeUrl;
     this.physicalAddress = this.config.email.physicalAddress;
     
@@ -36,14 +39,7 @@ class SendGridService {
       // Assuming sgWebhook.init is a global static initialization.
       // If it requires specific config (like webhook signing key), it should be passed.
       // For now, using apiKey as per original code.
-      if (this.config.sendgridWebhookSigningKey) { // Example: use a specific signing key if available
-         // sgWebhook.init(this.config.sendgridWebhookSigningKey); // This is hypothetical
-         // The library @sendgrid/webhook's verifyEventAndTimestamp uses the key directly.
-         // There isn't an `init` method on the library itself.
-         // Webhook verification is usually done on the request object.
-         // So, sgWebhook.init(this.apiKey) was likely a placeholder or misunderstanding.
-         // We will remove sgWebhook.init() as it's not a standard SendGrid library feature for webhook setup this way.
-         // Verification happens per request: const verified = sgWebhook.verifyEventAndTimestamp(publicKey, payload, signature, timestamp);
+      if (this.config.email.sendgridWebhookSigningKey) { // Corrected path to signing key
          this.logger.info('SendGrid service configured with API key. Webhook verification key available.');
       } else {
         this.logger.info('SendGrid service configured with API key. Webhook signing key not found in config, verification might be basic.');

@@ -54,6 +54,7 @@ module.exports = {
     fromEmail: process.env.FROM_EMAIL || 'jr@robertsonwright.co.uk',
     fromName: process.env.FROM_NAME || 'Joe Robertson',
     templateId: process.env.SENDGRID_TEMPLATE_ID || '',
+    sendgridWebhookSigningKey: process.env.SENDGRID_WEBHOOK_SIGNING_KEY || '',
     unsubscribeUrl: process.env.UNSUBSCRIBE_URL || 'https://robertsonwright.co.uk/unsubscribe',
     physicalAddress: process.env.PHYSICAL_ADDRESS || 'Robertson Wright, London, UK',
     rateLimitPerMinute: parseInt(process.env.EMAIL_RATE_LIMIT || '100', 10),
