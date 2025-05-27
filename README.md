@@ -267,13 +267,55 @@ You can also trigger individual steps manually via API endpoints:
 - Enrichment: `POST http://localhost:3001/trigger/enrich`
 - Outreach: `POST http://localhost:3001/trigger/outreach`
 
-The Streamlit user interface also uses the `/trigger/scrape` endpoint to initiate the scraping process.
+##### Streamlit UI Integration with `/trigger/scrape`
+
+The Streamlit user interface (`app.py`) provides a user-friendly way to initiate and customize the scraping process. It leverages the `/trigger/scrape` backend endpoint, sending various parameters to tailor the job search:
+
+-   **Target Job Titles (`target_job_titles`):** Users can specify a list of job titles to search for (e.g., "M&A Analyst", "Investment Banking Associate"). This allows focusing the search on specific roles of interest.
+-   **Target States (`target_states`):** Users can define a list of US states for geographic targeting of jobs (e.g., "NY", "CA", "TX"). This helps narrow down results to specific regions. If not provided, a default location (e.g., "United States") might be used by the backend.
+-   **Job Sources (`job_sources`):** While deep integration is evolving, this parameter allows the UI to suggest preferred scraping sources (e.g., disabling specific scrapers like SerpApi or Playwright if desired). The backend receives this and can adapt its scraping strategy.
+-   **Other Parameters:** The UI also passes parameters like `source_text` (for future job description analysis), `confidence_threshold`, and `processing_mode`. While these are passed to the backend, their comprehensive integration into the core scraping and analysis logic is planned for future enhancements.
+
+These dynamic parameters enable more flexible and targeted job scraping directly from the Streamlit UI, enhancing the system's usability for specific search criteria.
 
 #### Health Check
 
 - Health status: `GET http://localhost:3000/health`
 
 Please refer to the [build-plan.md](build-plan.md) file for the complete implementation plan and progress tracking.
+
+## Testing
+
+This section outlines strategies for testing various parts of the application.
+
+### Testing API Connectivity and Apify Actors
+
+The `scripts/test-apis.js` script can be used to:
+- Verify connectivity to external APIs (SerpAPI, Hunter.io, ZeroBounce, SendGrid).
+- Test the `ApifyService` directly by running configured Apify actors with default or overridden inputs.
+- See the "Configuring and Using Dynamic Apify Actor Inputs" section for more details on using flags like `--job-title` and `--apify-overrides` with this script.
+
+### Testing Streamlit UI Integration
+
+To ensure the parameters from the Streamlit UI (`app.py`) are correctly processed by the backend, the following testing approaches are recommended:
+
+1.  **Automated Script (`scripts/test-streamlit-integration.js`):**
+    *   It is recommended to use a dedicated script named `scripts/test-streamlit-integration.js` (this script would need to be created based on suggestions from the testing strategy analysis).
+    *   **Purpose:** This script simulates HTTP POST requests to the `/trigger/scrape` endpoint, mimicking how the Streamlit UI sends data. It allows for testing various combinations of parameters like `target_job_titles`, `target_states`, `maxItems`, etc., to verify backend processing.
+    *   **Example (Conceptual) Usage:**
+        ```bash
+        node scripts/test-streamlit-integration.js --target-job-titles "M&A Analyst,Investment Banking Associate" --target-states "NY,CA" --max-items 5
+        ```
+    *   This script helps in verifying the parameter handling logic in `index.js` and `smart-scraper.js` without needing to manually interact with the UI for every test case.
+
+2.  **Manual UI Testing & Log Verification:**
+    *   Perform tests directly through the Streamlit UI by inputting various job titles, states, and other settings.
+    *   **Crucially, monitor the backend Node.js application logs.** Check for messages indicating:
+        *   The parameters received by `index.js` at the `/trigger/scrape` endpoint.
+        *   The options being used by `smartScraper.js` (in `smartScrapeJobs` and `executeApifyScraping`).
+        *   The specific inputs being passed to Apify actors (e.g., job titles, locations).
+    *   Optionally, verify the scraped data in the database to ensure it aligns with the targeted parameters.
+    *   This manual approach provides end-to-end validation of the UI-to-backend parameter flow.
 
 ## API Keys Required
 

@@ -7,7 +7,7 @@ const db = require('./db/index'); // Fixed path - db is in src/db
 // Import factory functions for scrapers
 const createSerpApiClient = require('./scrapers/serpapi-client');
 const createPlaywrightScraper = require('./scrapers/playwright-scraper');
-const createScrapersService = require('./scrapers/index');
+// const createScrapersService = require('./scrapers/index'); // Removed legacy scraper service
 const createSmartScraper = require('./scrapers/smart-scraper');
 
 // Import factory functions for enrichment services
@@ -56,13 +56,13 @@ function initializeServices() {
     c.get('logger')
   ), logger);
   
-  // Register legacy scraper service (orchestrator) - kept for compatibility
-  registerIfNotExists('scrapersService', (c) => createScrapersService(
-    c.get('serpApiClient'),
-    c.get('playwrightScraper'),
-    c.get('config'),
-    c.get('logger')
-  ), logger);
+  // Register legacy scraper service (orchestrator) - kept for compatibility // REMOVED
+  // registerIfNotExists('scrapersService', (c) => createScrapersService(
+  //   c.get('serpApiClient'),
+  //   c.get('playwrightScraper'),
+  //   c.get('config'),
+  //   c.get('logger')
+  // ), logger);
 
   // Register enrichment services
   registerIfNotExists('clearbitService', (c) => createClearbitService(c.get('config'), c.get('logger')), logger);

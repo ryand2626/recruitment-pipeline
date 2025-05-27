@@ -2,7 +2,7 @@ const { initializeServices } = require('../../src/service-registration');
 const container = require('../../src/container');
 
 describe('Job Pipeline End-to-End Integration', () => {
-  let scrapersService;
+  let smartScraper; // Changed from scrapersService to smartScraper
   let enrichmentService;
   let outreachWorker;
   let sendgridService;
@@ -14,7 +14,7 @@ describe('Job Pipeline End-to-End Integration', () => {
     initializeServices();
     
     // Resolve services from container
-    scrapersService = container.get('scrapersService');
+    smartScraper = container.get('smartScraper'); // Changed to get smartScraper
     enrichmentService = container.get('enrichmentService');
     outreachWorker = container.get('outreachWorker');
     sendgridService = container.get('sendgridService');
@@ -36,7 +36,7 @@ describe('Job Pipeline End-to-End Integration', () => {
 
   describe('Service Initialization', () => {
     test('should initialize all core services successfully', () => {
-      expect(scrapersService).toBeDefined();
+      expect(smartScraper).toBeDefined(); // Changed to smartScraper
       expect(enrichmentService).toBeDefined();
       expect(outreachWorker).toBeDefined();
       expect(sendgridService).toBeDefined();
@@ -45,8 +45,9 @@ describe('Job Pipeline End-to-End Integration', () => {
     });
 
     test('should have all required service methods', () => {
-      // Scrapers service methods
-      expect(typeof scrapersService.runAllScrapers).toBe('function');
+      // Smart Scraper methods
+      expect(typeof smartScraper.smartScrapeJobs).toBe('function'); // Check for smartScrapeJobs
+      expect(typeof smartScraper.getScrapingRecommendations).toBe('function'); // Add another relevant method from smartScraper
       
       // Enrichment service methods
       expect(typeof enrichmentService.enrichJob).toBe('function');
@@ -54,7 +55,7 @@ describe('Job Pipeline End-to-End Integration', () => {
       
       // Outreach worker methods
       expect(typeof outreachWorker.processBatch).toBe('function');
-      expect(typeof outreachWorker.initWebhookServer).toBe('function');
+      // expect(typeof outreachWorker.initWebhookServer).toBe('function'); // Removed as the method was deleted
       
       // SendGrid service methods
       expect(typeof sendgridService.sendJobOutreach).toBe('function');

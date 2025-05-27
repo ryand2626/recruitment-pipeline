@@ -3,8 +3,8 @@
  * Coordinates the email outreach process, including sending emails and handling events
  */
 
-const express = require('express');
-const bodyParser = require('body-parser');
+// const express = require('express'); // Removed, no longer needed
+// const bodyParser = require('body-parser'); // Removed, no longer needed
 // const sendgridService = require('./sendgrid-service'); // Remove
 // const db = require('../db'); // Remove (if only sendgridService used it, it's already injected there)
 // const logger = require('../utils/logger'); // Remove
@@ -16,75 +16,7 @@ class OutreachWorker {
     this.config = config; // For WEBHOOK_PORT and other configs
   }
 
-  /**
-   * Initialize webhook server for handling email events
-   * @param {number} port - Optional port to listen on, overrides config if provided
-   * @returns {Promise<Object>} Express server
-   */
-  async initWebhookServer(port) {
-    // Use provided port or fallback to config, then default
-    const actualPort = port || (this.config && this.config.ports && this.config.ports.webhook) || 3000;
-    const app = express();
-    
-    // Parse JSON bodies
-    app.use(bodyParser.json());
-    
-    // Handle SendGrid webhook events
-    app.post('/webhook/sendgrid', async (req, res) => {
-      try {
-        const events = req.body; // SendGrid sends events in an array
-        
-        if (!Array.isArray(events)) {
-          this.logger.warn('Received non-array webhook data from SendGrid', { data: events });
-          return res.status(400).send('Expected array of events');
-        }
-        
-        this.logger.info(`Received ${events.length} SendGrid webhook events`);
-        
-        // Process each event
-        // Using Promise.allSettled to ensure all events are attempted even if some fail
-        const results = await Promise.allSettled(
-          events.map(event => this.sendgridService.processWebhookEvent(event))
-        );
-        
-        const processedCount = results.filter(r => r.status === 'fulfilled' && r.value !== null).length;
-        const failedCount = results.filter(r => r.status === 'rejected' || (r.status === 'fulfilled' && r.value === null)).length;
-
-        this.logger.info(`Webhook processing complete. Processed: ${processedCount}, Failed/Skipped: ${failedCount}`);
-        
-        // SendGrid expects a 2xx response to acknowledge receipt.
-        // Even if some events failed processing on our end, we received them.
-        return res.status(200).send({
-          message: "Events received",
-          received: events.length,
-          successfully_processed: processedCount,
-          failed_or_skipped_processing: failedCount
-        });
-      } catch (error) { // Catch errors from body parsing or other unexpected issues
-        this.logger.error('Critical error processing SendGrid webhook events batch', { error: error.message, stack: error.stack });
-        return res.status(500).send('Error processing webhook events');
-      }
-    });
-    
-    // Health check endpoint
-    app.get('/health', (req, res) => {
-      this.logger.debug('Health check endpoint hit.');
-      res.status(200).send('OK');
-    });
-    
-    // Start the server
-    return new Promise((resolve, reject) => {
-      const server = app.listen(actualPort, () => {
-        this.logger.info(`Webhook server listening on port ${actualPort}`);
-        resolve(server);
-      });
-      
-      server.on('error', (error) => {
-        this.logger.error('Error starting webhook server', { port: actualPort, error: error.message, stack: error.stack });
-        reject(error);
-      });
-    });
-  }
+  // Removed initWebhookServer method as it's redundant with index.js
 
   /**
    * Process a batch of jobs for outreach

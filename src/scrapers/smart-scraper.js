@@ -30,37 +30,54 @@ module.exports = (serpApiClient, playwrightScraper, apifyService, rateLimiter, c
 
       logger.info('Smart scraper starting with strategy', { 
         jobScraping: strategy.jobScraping,
-        apiUsage: usageStats.stats
+        apiUsage: usageStats.stats,
+        optionsReceived: options // Log received options
       });
 
       // Execute job scraping based on strategy
-      if (strategy.jobScraping.primary === 'serpApi') {
+      // TODO: Consider options.job_sources to select primary/fallback strategy
+      if (strategy.jobScraping.primary === 'serpApi' && (!options.job_sources || options.job_sources.serpApi !== false)) {
         logger.info('Using SerpAPI as primary job scraping method');
         results.serpapi = await executeSerpApiScraping(options);
         results.total += results.serpapi.total;
-      } else {
-        logger.info(`Using Apify as primary job scraping method: ${strategy.jobScraping.reason}`);
+      } else if ((!options.job_sources || options.job_sources.apify !== false)) { // Default to Apify if SerpAPI is disabled or not primary
+        logger.info(`Using Apify as primary job scraping method. Reason: ${strategy.jobScraping.primary !== 'serpApi' ? strategy.jobScraping.reason : 'SerpAPI disabled by job_sources'}`);
         results.apify = await executeApifyScraping(options);
         results.total += results.apify.total;
+      } else {
+        logger.warn('Neither SerpAPI nor Apify are enabled or selected as primary. No primary scraping performed.');
       }
-
+      
       // If primary method didn't yield enough results, try fallback
-      if (results.total < (options.minResults || 10)) {
-        logger.info(`Primary method yielded ${results.total} results, trying fallback methods`);
+      const minResults = options.minResults || 10;
+      if (results.total < minResults) {
+        logger.info(`Primary method yielded ${results.total} results (target: ${minResults}), trying fallback methods`);
         
-        if (strategy.jobScraping.primary !== 'apify') {
-          logger.info('Trying Apify as fallback');
-          const apifyResults = await executeApifyScraping(options);
-          results.apify = apifyResults;
-          results.total += apifyResults.total;
+        // Try Apify as fallback if not used as primary and not disabled
+        if (strategy.jobScraping.primary !== 'apify' && (!options.job_sources || options.job_sources.apify !== false)) {
+          if (results.apify.total === 0) { // Ensure Apify wasn't already run (e.g. if SerpAPI was primary but disabled)
+            logger.info('Trying Apify as fallback');
+            const apifyResults = await executeApifyScraping(options);
+            results.apify.total += apifyResults.total; // Accumulate if somehow run twice
+            // results.apify.byTitle and byActor would need careful merging if run twice. For now, assume it's additive.
+            for (const [key, value] of Object.entries(apifyResults.byTitle)) {
+              results.apify.byTitle[key] = (results.apify.byTitle[key] || 0) + value;
+            }
+             for (const [key, value] of Object.entries(apifyResults.byActor)) {
+              results.apify.byActor[key] = (results.apify.byActor[key] || 0) + value;
+            }
+            results.total += apifyResults.total;
+          }
         }
 
-        // Try Playwright as last resort if still not enough results
-        if (results.total < (options.minResults || 10)) {
-          logger.info('Trying Playwright as last resort');
-          const playwrightResults = await executePlaywrightScraping(options);
-          results.playwright = playwrightResults;
-          results.total += playwrightResults.total;
+        // Try Playwright as last resort if still not enough results and not disabled
+        if (results.total < minResults && (!options.job_sources || options.job_sources.playwright !== false)) {
+           if (results.playwright.total === 0) { // Ensure Playwright wasn't already run
+            logger.info('Trying Playwright as last resort');
+            const playwrightResults = await executePlaywrightScraping(options);
+            results.playwright = playwrightResults;
+            results.total += playwrightResults.total;
+           }
         }
       }
 
@@ -110,27 +127,48 @@ module.exports = (serpApiClient, playwrightScraper, apifyService, rateLimiter, c
       logger.info('Starting Apify job scraping');
       
       const results = { total: 0, byTitle: {}, byActor: {} };
-      
+      const jobTitlesToScrape = options.target_job_titles && options.target_job_titles.length > 0 ? options.target_job_titles : config.jobTitles;
+      const locationString = options.target_states && options.target_states.length > 0 ? options.target_states.join(', ') : (options.location || "United States");
+
+      logger.info(`Apify will scrape for job titles: ${jobTitlesToScrape.join(', ')} in locations: ${locationString}`);
+
       // Run Apify actors for each job title
-      for (const jobTitle of config.jobTitles) {
+      for (const jobTitle of jobTitlesToScrape) {
         try {
           logger.info(`Running Apify actors for job title: ${jobTitle}`);
           
-          // Run actors with job title context
-          const actorResults = await apifyService.runActors(jobTitle, {
-            // Runtime overrides for job-specific searches
+          // Runtime overrides for job-specific searches
+          // Note: options.maxItems, options.pages are passed from index.js defaults or request body
+          const actorRunOptions = {
             "apify/indeed-scraper": {
               position: jobTitle,
-              location: options.location || "United States",
-              maxItems: options.maxItems || 50
+              location: locationString,
+              maxItems: options.maxItems || 50,
+              country: options.target_states && options.target_states.length === 1 ? options.target_states[0] : undefined // Some actors might use 'country'
             },
             "apify/linkedin-jobs-scraper": {
-              keywords: jobTitle,
-              location: options.location || "United States",
+              searchKeywords: jobTitle, // Changed from 'keywords' to 'searchKeywords' based on common Apify actor params
+              location: locationString,
               maxItems: options.maxItems || 50
             },
-            "apify/google-jobs-scraper": {
-              queries: [`${jobTitle} ${options.location || "United States"}`],
+            "apify/google-jobs-scraper": { // This actor seems to use 'queries'
+              queries: [`${jobTitle} ${locationString}`],
+              maxPagesPerQuery: options.pages || 3 // Ensure 'pages' is used here
+            },
+            // Example for ZipRecruiter if it were added:
+            // "apify/ziprecruiter-scraper": {
+            //   search: jobTitle,
+            //   location: locationString,
+            //   maxItems: options.maxItems || 50
+            // }
+          };
+          
+          // TODO: Conditionally run actors based on options.job_sources if that level of control is desired.
+          // For now, run all configured/available actors.
+          const actorResults = await apifyService.runActors(jobTitle, actorRunOptions);
+
+          if (actorResults && actorResults.length > 0) {
+            results.byTitle[jobTitle] = actorResults.length;
               maxPagesPerQuery: options.pages || 3
             }
           });
