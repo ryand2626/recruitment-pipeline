@@ -12,7 +12,7 @@ module.exports = {
     host: process.env.POSTGRES_HOST || 'localhost',
     port: parseInt(process.env.POSTGRES_PORT || '5435', 10),
     user: process.env.POSTGRES_USER || 'jobsadmin',
-    password: process.env.POSTGRES_PASSWORD || 'X2tP9vR7sQ4mE5jL8kF3wA6bC1dN0pZ',
+    password: process.env.POSTGRES_PASSWORD,
     database: process.env.POSTGRES_DB || 'jobspipeline',
     ssl: process.env.POSTGRES_SSL === 'true'
   },
@@ -142,7 +142,7 @@ module.exports = {
 
   // Apify Configuration - Primary scraping engine
   apify: {
-    token: process.env.APIFY_TOKEN || "YOUR_APIFY_TOKEN",
+    token: process.env.APIFY_TOKEN,
     proxySettings: {
       proxyGroups: ["RESIDENTIAL"],
       countryCode: "US"

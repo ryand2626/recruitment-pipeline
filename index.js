@@ -40,6 +40,27 @@ async function init() {
       process.exit(1);
     }
 
+    // Check for essential environment variables
+    const criticalConfigs = {
+      'Database Password (POSTGRES_PASSWORD)': config.database.password,
+      'Apify Token (APIFY_TOKEN)': config.apify.token,
+      'SendGrid API Key (SENDGRID_API_KEY)': config.apiKeys.sendGrid
+    };
+
+    const missingCriticalConfigs = Object.entries(criticalConfigs)
+      .filter(([key, value]) => !value) // Checks for undefined, null, empty string
+      .map(([key]) => key);
+
+    if (missingCriticalConfigs.length > 0) {
+      const message = `FATAL ERROR: The following critical environment variables are missing or empty: ${missingCriticalConfigs.join(', ')}. Please set them in your .env file or environment. Application will now exit.`;
+      if (logger) {
+        logger.error(message);
+      } else {
+        console.error(message);
+      }
+      process.exit(1);
+    }
+
     try {
       scrapersService = container.get('smartScraper'); // Use smart scraper instead
       enrichmentService = container.get('enrichmentService');
@@ -197,9 +218,22 @@ function setupRoutes() {
 
     try {
       const publicKey = config.email.sendgridWebhookSigningKey;
+
       if (!publicKey) {
-        logger.warn('SendGrid webhook signing key is not configured. Skipping signature verification.');
+        if (process.env.NODE_ENV === 'production') {
+          logger.error('CRITICAL: SendGrid webhook signing key is missing in PRODUCTION. Aborting webhook processing.');
+          return res.status(403).json({ error: 'Webhook signing key is missing. Configuration error.' });
+        } else {
+          if (process.env.ALLOW_INSECURE_WEBHOOKS === 'true') {
+            logger.warn('WARNING: SendGrid webhook signing key is missing. Skipping signature verification as ALLOW_INSECURE_WEBHOOKS is true in non-production environment.');
+            // Proceed (allow to fall through to event processing)
+          } else {
+            logger.error('ERROR: SendGrid webhook signing key is missing. ALLOW_INSECURE_WEBHOOKS is not set for non-production. Aborting webhook processing.');
+            return res.status(403).json({ error: 'Webhook signing key is missing and insecure webhooks are not explicitly allowed for non-production. Aborting.' });
+          }
+        }
       } else {
+        // Existing signature verification logic:
         const signature = req.headers['x-twilio-email-event-webhook-signature'];
         const timestamp = req.headers['x-twilio-email-event-webhook-timestamp'];
         const payload = req.body; // This needs to be the raw body buffer

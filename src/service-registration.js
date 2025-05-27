@@ -44,7 +44,7 @@ function initializeServices() {
   // Register scraper clients
   registerIfNotExists('serpApiClient', (c) => createSerpApiClient(c.get('config'), c.get('logger')), logger);
   registerIfNotExists('playwrightScraper', (c) => createPlaywrightScraper(c.get('config'), c.get('logger')), logger);
-  registerIfNotExists('apifyService', (c) => new ApifyService(), logger);
+  registerIfNotExists('apifyService', (c) => new ApifyService(c.get('config'), c.get('logger')), logger);
   
   // Register smart scraper (primary scraper with rate limiting)
   registerIfNotExists('smartScraper', (c) => createSmartScraper(

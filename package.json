@@ -40,7 +40,6 @@
     "node-cron": "^3.0.3",
     "pg": "^8.11.3",
     "playwright": "^1.40.0",
-    "puppeteer": "^24.9.0",
     "winston": "^3.11.0",
     "yargs": "^17.0.0"
   },
