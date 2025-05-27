@@ -1,6 +1,4 @@
-const config = require('../../config/config');
 const ActorRunner = require('./ActorRunner');
-const logger = require('../utils/logger');
 const mergeWith = require('lodash.mergewith'); // Assuming lodash.mergewith will be available
 
 // Customizer for _.mergeWith to handle array replacements instead of merging
@@ -14,8 +12,16 @@ function mergeCustomizer(objValue, srcValue) {
 }
 
 class ApifyService {
-  constructor() {
-    this.actorRunner = new ActorRunner();
+  constructor(configInstance, loggerInstance) {
+    if (!configInstance) {
+      throw new Error('ApifyService constructor: configInstance is required');
+    }
+    if (!loggerInstance) {
+      throw new Error('ApifyService constructor: loggerInstance is required');
+    }
+    this.config = configInstance; // Use this.config
+    this.logger = loggerInstance; // Use this.logger
+    this.actorRunner = new ActorRunner(this.config.apify.token, this.logger);
   }
 
   /**
@@ -25,14 +31,14 @@ class ApifyService {
    * @returns {Promise<Array>} A promise that resolves to a flattened array of items from all successful actor runs.
    */
   async runActors(jobTitle, runtimeOverrides = {}) {
-    if (!config.apify.useApify) {
-      logger.info('Apify usage is disabled in the configuration. Skipping Apify actor runs.');
+    if (!this.config.apify.useApify) {
+      this.logger.info('Apify usage is disabled in the configuration. Skipping Apify actor runs.');
       return [];
     }
 
-    const actorConfigs = config.apify.actors;
+    const actorConfigs = this.config.apify.actors;
     if (!actorConfigs || actorConfigs.length === 0) {
-      logger.warn('No Apify actors configured. Nothing to run.');
+      this.logger.warn('No Apify actors configured. Nothing to run.');
       return [];
     }
 
@@ -40,11 +46,11 @@ class ApifyService {
 
     for (const actorConfig of actorConfigs) {
       if (!actorConfig || !actorConfig.actorId) {
-        logger.warn('Found an actor configuration without an actorId. Skipping.', actorConfig);
+        this.logger.warn('Found an actor configuration without an actorId. Skipping.', actorConfig);
         continue;
       }
       const actorId = actorConfig.actorId; // Use actorId for clarity and consistency
-      logger.info(`Processing actor: ${actorId} (Name: ${actorConfig.name || 'N/A'})`);
+      this.logger.info(`Processing actor: ${actorId} (Name: ${actorConfig.name || 'N/A'})`);
 
       // 1. Compute finalInput with deep merging
       // Start with a deep copy of defaultInput to avoid modifying the original config
@@ -53,7 +59,7 @@ class ApifyService {
       // Apply jobTitle overrides if jobTitle is provided and overrides exist for it
       if (jobTitle && actorConfig.overridesByJobTitle && actorConfig.overridesByJobTitle[jobTitle]) {
         const jobTitleOverrides = actorConfig.overridesByJobTitle[jobTitle];
-        logger.info(`Applying job title overrides for "${jobTitle}" to actor ${actorId}: ${JSON.stringify(jobTitleOverrides)}`);
+        this.logger.info(`Applying job title overrides for "${jobTitle}" to actor ${actorId}: ${JSON.stringify(jobTitleOverrides)}`);
         // Ensure deep merge, especially for nested objects. Arrays from jobTitleOverrides should replace defaultInput arrays.
         finalInput = mergeWith({}, finalInput, jobTitleOverrides, mergeCustomizer);
       }
@@ -62,33 +68,33 @@ class ApifyService {
       // These have the highest precedence.
       if (runtimeOverrides[actorId]) {
         const currentActorRuntimeOverrides = runtimeOverrides[actorId];
-        logger.info(`Applying runtime overrides to actor ${actorId}: ${JSON.stringify(currentActorRuntimeOverrides)}`);
+        this.logger.info(`Applying runtime overrides to actor ${actorId}: ${JSON.stringify(currentActorRuntimeOverrides)}`);
         // Arrays from runtimeOverrides should replace arrays from the current finalInput.
         finalInput = mergeWith({}, finalInput, currentActorRuntimeOverrides, mergeCustomizer);
       }
       
       // 2. Log the final input (conceptual validation)
-      logger.info(`Final input for actor ${actorId}: ${JSON.stringify(finalInput, null, 2)}`);
+      this.logger.info(`Final input for actor ${actorId}: ${JSON.stringify(finalInput, null, 2)}`);
       // TODO: Implement actual input validation against a schema in the future.
       // For now, we assume the input is valid if it's constructed.
       // If validation were to fail:
-      // logger.error(`Invalid final input for actor ${actorId}. Skipping run.`);
+      // this.logger.error(`Invalid final input for actor ${actorId}. Skipping run.`);
       // continue;
 
       try {
         // 3. Invoke ActorRunner.run
-        logger.info(`Running actor ${actorId} with ActorRunner...`);
+        this.logger.info(`Running actor ${actorId} with ActorRunner...`);
         const items = await this.actorRunner.run(actorId, finalInput);
         if (items && items.length > 0) {
           // Store actorId along with items for better traceability before flattening, if needed.
           // For now, just add to results.
           allResults.push(...items); // Flatten results immediately
-          logger.info(`Actor ${actorId} successfully returned ${items.length} items.`);
+          this.logger.info(`Actor ${actorId} successfully returned ${items.length} items.`);
         } else {
-          logger.info(`Actor ${actorId} returned no items or failed (ActorRunner handles logging of failure).`);
+          this.logger.info(`Actor ${actorId} returned no items or failed (ActorRunner handles logging of failure).`);
         }
       } catch (error) {
-        logger.error(`An error occurred while running actor ${actorId} via ActorRunner: ${error.message}`, error);
+        this.logger.error(`An error occurred while running actor ${actorId} via ActorRunner: ${error.message}`, error);
         // Optionally, collect error information or re-throw if higher level handling is needed
       }
     }
@@ -96,7 +102,7 @@ class ApifyService {
     // 4. (Conceptual for now) Map raw items - currently returning raw items
     // Flattening is done when pushing items into allResults
 
-    logger.info(`Completed processing all Apify actors. Total items retrieved: ${allResults.length}`);
+    this.logger.info(`Completed processing all Apify actors. Total items retrieved: ${allResults.length}`);
     return allResults;
   }
 }

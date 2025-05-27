@@ -874,16 +874,7 @@ def execute_pipeline_flow():
         "target_states": target_states,
         "confidence_threshold": confidence_threshold,
         "processing_mode": processing_mode,
-        "job_sources": {
-            "linkedin": search_linkedin, # Assuming search_linkedin is defined
-            "indeed": search_indeed, # Assuming search_indeed is defined
-            # "company_sites": search_company_sites, # This variable is not defined in the provided code
-            "glassdoor": search_glassdoor, # Assuming search_glassdoor is defined
-            # "efinancialcareers": search_specialized, # This variable is not defined
-            # "recruiters": search_recruiters # This variable is not defined
-            # Minimal example, ensure all referenced variables here are defined in your actual Streamlit app state
-             "job_sources": {key: value for key, value in all_sources.items() if value}
-        }
+        "job_sources": {key: value for key, value in all_sources.items() if value}
     }
 
     with st.spinner('🔄 Searching for job postings...'):

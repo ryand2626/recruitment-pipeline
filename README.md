@@ -236,11 +236,14 @@ _dmarc.yourdomain.com. 3600 IN TXT "v=DMARK1; p=none; rua=mailto:dmarc-reports@y
    docker-compose up -d
    ```
 
-4. Initialize the database:
+4. Initialize the database schema by running migrations:
+
+   After ensuring your Docker containers are up and the database service is running, execute the following command from your project root on the host machine (where `docker-compose` commands are run). This command will execute the migration script inside the application container:
 
    ```bash
-   docker exec jobs-pipeline-postgres psql -U jobsadmin -d jobspipeline -f /docker-entrypoint-initdb.d/001_initial_schema.sql
+   docker-compose exec app npm run migrate
    ```
+   This command applies all pending database migrations to set up or update your schema.
 
 5. Access the n8n dashboard at http://localhost:5678 and login with the credentials from your `.env` file (default is admin/D7yH9xK2pF5mT3bW)
 
