@@ -85,6 +85,47 @@ class HealthCheck {
         return { status: 'unhealthy', message: `Memory check error: ${error.message}` };
       }
     });
+
+    // API rate limiting check
+    this.checks.set('api_limits', async () => {
+      try {
+        const rateLimiter = container.get('rateLimiter');
+        const usageStats = rateLimiter.getUsageStats();
+        
+        const warnings = [];
+        const criticals = [];
+        
+        Object.entries(usageStats.stats).forEach(([api, stats]) => {
+          if (stats.percentage >= 90) {
+            criticals.push(`${api}: ${stats.percentage}%`);
+          } else if (stats.percentage >= 70) {
+            warnings.push(`${api}: ${stats.percentage}%`);
+          }
+        });
+        
+        if (criticals.length > 0) {
+          return {
+            status: 'warning',
+            message: `APIs near limit: ${criticals.join(', ')}`,
+            details: usageStats
+          };
+        } else if (warnings.length > 0) {
+          return {
+            status: 'healthy',
+            message: `APIs usage normal, some approaching limits: ${warnings.join(', ')}`,
+            details: usageStats
+          };
+        }
+        
+        return {
+          status: 'healthy',
+          message: 'All APIs within normal usage limits',
+          details: usageStats
+        };
+      } catch (error) {
+        return { status: 'unhealthy', message: `API limits check error: ${error.message}` };
+      }
+    });
   }
 
   async runCheck(name) {

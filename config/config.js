@@ -117,50 +117,164 @@ module.exports = {
     }
   },
 
-  // Apify Configuration
+  // API Rate Limiting Configuration
+  rateLimits: {
+    serpApi: {
+      dailyLimit: 2,
+      enabled: false, // Disable due to severe limits
+      fallbackToApify: true
+    },
+    hunter: {
+      dailyLimit: 2,
+      enabled: false, // Disable due to severe limits
+      fallbackToApify: true
+    },
+    zeroBounce: {
+      dailyLimit: 100,
+      enabled: true // Keep enabled, manageable limit
+    },
+    sendGrid: {
+      dailyLimit: 100,
+      enabled: true // Keep enabled, sufficient for testing
+    }
+  },
+
+  // Apify Configuration - Primary scraping engine
   apify: {
-    token: process.env.APIFY_TOKEN || "YOUR_APIFY_TOKEN", // Placeholder, should be set via ENV
+    token: process.env.APIFY_TOKEN || "YOUR_APIFY_TOKEN",
     proxySettings: {
       proxyGroups: ["RESIDENTIAL"],
       countryCode: "US"
     },
-    useApify: process.env.USE_APIFY === 'true' || true, // Default to true if not set
+    useApify: process.env.USE_APIFY === 'true' || true,
+    
+    // Comprehensive actor configuration for job scraping
     actors: [
       {
-        actorId: "apify/google-search-scraper",
-        name: "Google Search Scraper",
-        description: "Scrapes Google search results based on keywords and other parameters.",
+        actorId: "apify/indeed-scraper",
+        name: "Indeed Job Scraper",
+        description: "Scrapes job listings from Indeed with comprehensive data extraction.",
+        priority: 1, // Primary scraper
         defaultInput: {
-          queries: "site:linkedin.com/in/ OR site:linkedin.com/pub/ \"{title}\" \"{company}\" \"{location}\"",
-          maxPagesPerQuery: 1,
-          resultsPerPage: 10,
-          countryCode: "US",
-          languageCode: "en"
-        },
-        // No overrides for this actor by default
-        overridesByJobTitle: {} 
-      },
-      {
-        actorId: "another/example-actor", // Replace with a real actor ID if available
-        name: "Example LinkedIn Profile Scraper",
-        description: "Scrapes specific data from LinkedIn profiles.",
-        defaultInput: {
-          // Define default input fields for this actor
-          // e.g., fields: ["fullName", "location", "experiences"],
-          // maxProfiles: 10
+          position: "{jobTitle}",
+          location: "United States",
+          maxItems: 50,
+          parseCompanyDetails: true,
+          saveHtml: false,
+          saveMarkdown: false
         },
         overridesByJobTitle: {
           "M&A Associate": {
-            // Specific input overrides for "M&A Associate"
-            // e.g., maxProfiles: 20,
-            // searchKeywords: ["mergers", "acquisitions", "finance"] 
+            maxItems: 100,
+            location: "New York, NY"
           },
           "Investment Banking Analyst": {
-            // Specific input overrides for "Investment Banking Analyst"
-            // e.g., fields: ["fullName", "location", "experiences", "education"]
+            maxItems: 100,
+            location: "New York, NY"
           }
         }
+      },
+      {
+        actorId: "apify/linkedin-jobs-scraper",
+        name: "LinkedIn Jobs Scraper",
+        description: "Scrapes job postings from LinkedIn with contact information.",
+        priority: 2,
+        defaultInput: {
+          keywords: "{jobTitle}",
+          location: "United States",
+          maxItems: 50,
+          datePosted: "week",
+          experienceLevel: ["mid", "senior", "director"],
+          includeCompanyData: true
+        },
+        overridesByJobTitle: {
+          "Managing Director - Investment Banking": {
+            experienceLevel: ["director", "executive"],
+            maxItems: 30
+          },
+          "Vice President M&A": {
+            experienceLevel: ["senior", "director"],
+            maxItems: 40
+          }
+        }
+      },
+      {
+        actorId: "apify/google-jobs-scraper",
+        name: "Google Jobs Scraper",
+        description: "Scrapes Google Jobs results - replacement for SerpAPI.",
+        priority: 3,
+        defaultInput: {
+          queries: ["{jobTitle} United States"],
+          maxPagesPerQuery: 3,
+          resultsPerPage: 20,
+          includeCompanyInfo: true,
+          extractEmails: true
+        },
+        overridesByJobTitle: {
+          "Corporate Finance": {
+            queries: ["Corporate Finance United States", "Corp Finance United States"],
+            maxPagesPerQuery: 2
+          }
+        }
+      },
+      {
+        actorId: "apify/glassdoor-scraper",
+        name: "Glassdoor Job Scraper",
+        description: "Scrapes Glassdoor for job listings with salary and company insights.",
+        priority: 4,
+        defaultInput: {
+          keyword: "{jobTitle}",
+          location: "United States",
+          maxItems: 30,
+          includeSalaryData: true,
+          includeCompanyReviews: false
+        }
+      },
+      {
+        actorId: "apify/web-scraper",
+        name: "Generic Web Scraper",
+        description: "Scrapes job boards not covered by specific actors.",
+        priority: 5,
+        defaultInput: {
+          startUrls: [
+            "https://jobs.lever.co/search?query={jobTitle}",
+            "https://boards.greenhouse.io/search?q={jobTitle}",
+            "https://angel.co/jobs?keywords={jobTitle}"
+          ],
+          maxRequestsPerCrawl: 100,
+          maxConcurrency: 5
+        }
+      },
+      {
+        actorId: "apify/email-extractor",
+        name: "Email Contact Extractor",
+        description: "Extracts contact emails from company websites - replacement for Hunter.io.",
+        priority: 6,
+        defaultInput: {
+          startUrls: ["{companyWebsite}"],
+          maxRequestsPerCrawl: 50,
+          emailPatterns: [
+            "hr@{domain}",
+            "careers@{domain}",
+            "recruiting@{domain}",
+            "jobs@{domain}"
+          ]
+        }
       }
-    ]
+    ],
+
+    // Fallback configuration when primary APIs are rate-limited
+    fallbackStrategies: {
+      jobScraping: {
+        primary: ["apify/indeed-scraper", "apify/linkedin-jobs-scraper"],
+        secondary: ["apify/google-jobs-scraper", "apify/glassdoor-scraper"],
+        tertiary: ["apify/web-scraper"]
+      },
+      contactEnrichment: {
+        primary: ["apify/email-extractor"],
+        secondary: ["apify/web-scraper"],
+        fallbackToManual: true
+      }
+    }
   }
 };

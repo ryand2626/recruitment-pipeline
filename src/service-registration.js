@@ -8,15 +8,18 @@ const db = require('./db/index'); // Fixed path - db is in src/db
 const createSerpApiClient = require('./scrapers/serpapi-client');
 const createPlaywrightScraper = require('./scrapers/playwright-scraper');
 const createScrapersService = require('./scrapers/index');
+const createSmartScraper = require('./scrapers/smart-scraper');
 
 // Import factory functions for enrichment services
 const createClearbitService = require('./enrichment/clearbit-service');
 const createHunterService = require('./enrichment/hunter-service');
 const createZeroBounceService = require('./enrichment/zerobounce-service');
 const createEnrichmentService = require('./enrichment/index'); // Main enrichment service factory
+const ApifyService = require('./scrapers/apify-service');
 
 // Import factory functions for outreach and utils
 const createEmailValidator = require('./utils/email-validator');
+const RateLimiter = require('./utils/rate-limiter');
 const createSendGridService = require('./outreach/sendgrid-service');
 const createOutreachWorker = require('./outreach/index');
 
@@ -41,8 +44,19 @@ function initializeServices() {
   // Register scraper clients
   registerIfNotExists('serpApiClient', (c) => createSerpApiClient(c.get('config'), c.get('logger')), logger);
   registerIfNotExists('playwrightScraper', (c) => createPlaywrightScraper(c.get('config'), c.get('logger')), logger);
+  registerIfNotExists('apifyService', (c) => new ApifyService(), logger);
   
-  // Register scraper service (orchestrator)
+  // Register smart scraper (primary scraper with rate limiting)
+  registerIfNotExists('smartScraper', (c) => createSmartScraper(
+    c.get('serpApiClient'),
+    c.get('playwrightScraper'),
+    c.get('apifyService'),
+    c.get('rateLimiter'),
+    c.get('config'),
+    c.get('logger')
+  ), logger);
+  
+  // Register legacy scraper service (orchestrator) - kept for compatibility
   registerIfNotExists('scrapersService', (c) => createScrapersService(
     c.get('serpApiClient'),
     c.get('playwrightScraper'),
@@ -65,6 +79,7 @@ function initializeServices() {
   ), logger);
 
   // Register utility and outreach services
+  registerIfNotExists('rateLimiter', (c) => new RateLimiter(c.get('config'), c.get('logger')), logger);
   registerIfNotExists('emailValidator', (c) => createEmailValidator(c.get('config'), c.get('logger'), c.get('db')), logger);
 
   registerIfNotExists('sendgridService', (c) => createSendGridService(

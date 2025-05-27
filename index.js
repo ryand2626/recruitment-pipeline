@@ -40,7 +40,7 @@ async function init() {
     }
 
     try {
-      scrapersService = container.get('scrapersService');
+      scrapersService = container.get('smartScraper'); // Use smart scraper instead
       enrichmentService = container.get('enrichmentService');
       outreachWorker = container.get('outreachWorker');
       logger.info('✅ All pipeline services initialized successfully.');
@@ -112,19 +112,33 @@ function setupRoutes() {
     try {
       logger.info('Manual scraping triggered via API', { params: req.body });
       
-      // Run scraping in background
-      runScraping()
-        .then(results => logger.info('Manual scraping via API completed.', { results }))
-        .catch(error => logger.error('Error in manual scraping via API.', { error: error.message }));
+      // Extract options from request body
+      const options = {
+        location: req.body.location || 'United States',
+        maxItems: req.body.maxItems || 50,
+        pages: req.body.pages || 3,
+        minResults: req.body.minResults || 10
+      };
       
-      return res.status(202).json({ 
-        status: 'accepted', 
-        message: 'Scraping process initiated.',
+      // Run scraping and return results immediately
+      const results = await runScraping(options);
+      
+      logger.info('Manual scraping via API completed.', { results });
+      return res.json({ 
+        success: true,
+        message: 'Smart scraping completed successfully',
+        results,
+        strategy: results.strategy,
+        rateLimitInfo: results.rateLimitInfo,
         timestamp: new Date().toISOString()
       });
     } catch (error) {
-      logger.error('Error triggering manual scraping via API', { error: error.message });
-      return res.status(500).json({ error: 'Internal server error' });
+      logger.error('Error in manual scraping via API', { error: error.message });
+      return res.status(500).json({ 
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString()
+      });
     }
   });
   
@@ -300,19 +314,28 @@ function setupScheduledJobs() {
 }
 
 // Execute the scraping process
-async function runScraping() {
+async function runScraping(options = {}) {
   if (!logger || !scrapersService) {
     (logger || console).error('Scraping cannot run: logger or scrapersService not initialized.');
     return { error: 'Services not initialized' };
   }
   
-  logger.info('🔍 Starting scraping process...');
+  logger.info('🔍 Starting smart scraping process...');
   try {
-    const results = await scrapersService.runAllScrapers();
-    logger.info(`✅ Scraping completed. Added ${results.total || 0} jobs in total.`);
+    // Use smart scraper with default options
+    const scrapingOptions = {
+      location: options.location || 'United States',
+      maxItems: options.maxItems || 50,
+      pages: options.pages || 3,
+      minResults: options.minResults || 10,
+      ...options
+    };
+    
+    const results = await scrapersService.smartScrapeJobs(scrapingOptions);
+    logger.info(`✅ Smart scraping completed. Added ${results.total || 0} jobs in total.`);
     return results;
   } catch (error) {
-    logger.error('❌ Error in scraping process', { error: error.message });
+    logger.error('❌ Error in smart scraping process', { error: error.message });
     throw error;
   }
 }
