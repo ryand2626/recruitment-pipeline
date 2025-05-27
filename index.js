@@ -5,6 +5,7 @@
 
 const express = require('express');
 const cron = require('node-cron');
+const sgWebhook = require('@sendgrid/eventwebhook');
 const container = require('./src/container');
 const { initializeServices } = require('./src/service-registration');
 
@@ -19,7 +20,7 @@ let config = null;
 const app = express();
 
 // Parse JSON request bodies
-app.use(express.json());
+// app.use(express.json()); // Removed global JSON parser to use raw body for webhook
 
 // Initialize the application
 async function init() {
@@ -189,14 +190,53 @@ function setupRoutes() {
   });
 
   // SendGrid webhook endpoint
-  app.post('/webhook/sendgrid', async (req, res) => {
+  app.post('/webhook/sendgrid', express.raw({ type: 'application/json' }), async (req, res) => {
     if (!logger || !outreachWorker) {
       return res.status(503).json({ error: 'Outreach service not available' });
     }
 
     try {
-      const events = req.body;
+      const publicKey = config.email.sendgridWebhookSigningKey;
+      if (!publicKey) {
+        logger.warn('SendGrid webhook signing key is not configured. Skipping signature verification.');
+      } else {
+        const signature = req.headers['x-twilio-email-event-webhook-signature'];
+        const timestamp = req.headers['x-twilio-email-event-webhook-timestamp'];
+        const payload = req.body; // This needs to be the raw body buffer
+
+        if (!signature || !timestamp) {
+          logger.warn('SendGrid webhook request missing signature or timestamp headers.');
+          return res.status(400).send('Missing signature/timestamp headers.');
+        }
+
+        try {
+          const isValid = sgWebhook.verifyEventAndTimestamp(publicKey, payload, signature, timestamp);
+          if (!isValid) {
+            logger.warn('Invalid SendGrid webhook signature.');
+            return res.status(403).send('Invalid webhook signature.');
+          }
+          logger.info('SendGrid webhook signature verified successfully.');
+        } catch (e) {
+          logger.error('Error during SendGrid webhook signature verification', { error: e.message });
+          return res.status(400).send('Error verifying webhook signature.');
+        }
+      }
       
+      let events;
+      if (Buffer.isBuffer(req.body)) {
+         try {
+             events = JSON.parse(req.body.toString('utf8'));
+         } catch (e) {
+             logger.error('Failed to parse webhook JSON payload after raw body read.', {error: e.message});
+             return res.status(400).json({ error: 'Invalid JSON payload' });
+         }
+      } else {
+         // This case should ideally not be hit if express.raw is used correctly for this route
+         // and no global express.json() is active, or if other middleware already parsed it.
+         logger.warn('Webhook payload was not a Buffer. Attempting to use req.body directly.');
+         events = req.body; 
+      }
+
       if (!Array.isArray(events)) {
         logger.warn('Received non-array webhook data from SendGrid', { data: events });
         return res.status(400).json({ error: 'Expected array of events' });
@@ -222,7 +262,7 @@ function setupRoutes() {
         failed_or_skipped_processing: failedCount
       });
     } catch (error) {
-      logger.error('Error processing SendGrid webhook events', { error: error.message });
+      logger.error('Error processing SendGrid webhook events', { error: error.message, stack: error.stack });
       return res.status(500).json({ error: 'Error processing webhook events' });
     }
   });
@@ -391,6 +431,8 @@ async function startApplication() {
 
 // Only start if this file is run directly
 if (require.main === module) {
+  // Parse JSON request bodies globally, AFTER raw for specific routes
+  app.use(express.json());
   startApplication();
 }
 
