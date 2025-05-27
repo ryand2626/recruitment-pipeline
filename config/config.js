@@ -115,5 +115,52 @@ module.exports = {
         // e.g., shouldRetry: './custom-should-retry-sendgrid.js' 
       }
     }
+  },
+
+  // Apify Configuration
+  apify: {
+    token: process.env.APIFY_TOKEN || "YOUR_APIFY_TOKEN", // Placeholder, should be set via ENV
+    proxySettings: {
+      proxyGroups: ["RESIDENTIAL"],
+      countryCode: "US"
+    },
+    useApify: process.env.USE_APIFY === 'true' || true, // Default to true if not set
+    actors: [
+      {
+        actorId: "apify/google-search-scraper",
+        name: "Google Search Scraper",
+        description: "Scrapes Google search results based on keywords and other parameters.",
+        defaultInput: {
+          queries: "site:linkedin.com/in/ OR site:linkedin.com/pub/ \"{title}\" \"{company}\" \"{location}\"",
+          maxPagesPerQuery: 1,
+          resultsPerPage: 10,
+          countryCode: "US",
+          languageCode: "en"
+        },
+        // No overrides for this actor by default
+        overridesByJobTitle: {} 
+      },
+      {
+        actorId: "another/example-actor", // Replace with a real actor ID if available
+        name: "Example LinkedIn Profile Scraper",
+        description: "Scrapes specific data from LinkedIn profiles.",
+        defaultInput: {
+          // Define default input fields for this actor
+          // e.g., fields: ["fullName", "location", "experiences"],
+          // maxProfiles: 10
+        },
+        overridesByJobTitle: {
+          "M&A Associate": {
+            // Specific input overrides for "M&A Associate"
+            // e.g., maxProfiles: 20,
+            // searchKeywords: ["mergers", "acquisitions", "finance"] 
+          },
+          "Investment Banking Analyst": {
+            // Specific input overrides for "Investment Banking Analyst"
+            // e.g., fields: ["fullName", "location", "experiences", "education"]
+          }
+        }
+      }
+    ]
   }
 };

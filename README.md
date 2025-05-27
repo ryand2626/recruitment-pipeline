@@ -48,6 +48,117 @@ jobs-pipeline/
 - API keys for all required services (see below)
 - Domain with proper email sending setup (SPF, DKIM, DMARC)
 
+## Configuring and Using Dynamic Apify Actor Inputs
+
+This project leverages Apify actors for flexible data scraping. The inputs to these actors can be dynamically configured at multiple levels, allowing for tailored scraping behavior.
+
+### 1. Configuration in `config/config.js`
+
+Apify actor configurations are defined within the `apify.actors` array in the `config/config.js` file. Each actor object in this array can have the following key properties:
+
+-   `actorId` (String): The unique identifier of the Apify actor (e.g., "apify/google-search-scraper").
+-   `name` (String): A human-readable name for the actor (e.g., "Google Search Scraper").
+-   `defaultInput` (Object): An object defining the default input parameters for the actor. These inputs are used if no other overrides are provided.
+-   `overridesByJobTitle` (Object): An object where keys are job titles (matching those in `config.jobTitles`) and values are objects that override parts of `defaultInput` for that specific job title.
+
+**Example `config.js` snippet for `apify.actors`:**
+
+```javascript
+// In config/config.js
+// ...
+  apify: {
+    token: process.env.APIFY_TOKEN || "YOUR_APIFY_TOKEN",
+    proxySettings: { /* ... */ },
+    useApify: true,
+    actors: [
+      {
+        actorId: "apify/google-search-scraper",
+        name: "Google Search Scraper",
+        description: "Scrapes Google search results based on keywords and other parameters.",
+        defaultInput: {
+          queries: "site:linkedin.com/in/ OR site:linkedin.com/pub/ \"{title}\" \"{company}\" \"{location}\"",
+          maxPagesPerQuery: 1,
+          resultsPerPage: 10,
+          countryCode: "US",
+          languageCode: "en"
+        },
+        overridesByJobTitle: {
+          "M&A Analyst": {
+            maxPagesPerQuery: 2, // For M&A Analysts, scrape 2 pages instead of 1
+            resultsPerPage: 25   // And get 25 results per page
+          },
+          "Corporate Finance": {
+            queries: "site:linkedin.com/in/ \"Corporate Finance\" \"{company}\" \"{location}\"",
+            languageCode: "de" // Example: Search in German for Corporate Finance roles
+          }
+        }
+      },
+      {
+        actorId: "another/example-actor",
+        name: "Example LinkedIn Profile Scraper",
+        description: "Scrapes specific data from LinkedIn profiles.",
+        defaultInput: {
+          fields: ["fullName", "location", "experiences"],
+          maxProfiles: 10
+        },
+        overridesByJobTitle: {
+          "M&A Associate": {
+            maxProfiles: 20,
+            searchKeywords: ["mergers", "acquisitions", "finance"] 
+          }
+        }
+      }
+      // ... other actor configurations
+    ]
+  }
+// ...
+```
+
+### 2. Input Precedence
+
+The `ApifyService` determines the final input for an actor run by merging inputs in the following order of precedence (highest to lowest):
+
+1.  **Runtime Overrides**: Input parameters provided at the time of calling the service (e.g., via the `scripts/test-apis.js` script or an API endpoint). These take the highest priority.
+2.  **Job Title Overrides**: If a `jobTitle` is provided and an entry for it exists in the actor's `overridesByJobTitle` configuration, these overrides are applied.
+3.  **Default Input**: The actor's `defaultInput` configuration is used as the base.
+
+This layered approach allows for general default settings, specific adjustments for different job titles, and ad-hoc modifications at runtime. When merging, array properties in overriding inputs will replace arrays in the base input; other object properties are merged deeply.
+
+### 3. Testing with `scripts/test-apis.js`
+
+The `scripts/test-apis.js` script provides a way to test the `ApifyService` and experiment with input overrides. You can use the following command-line flags:
+
+-   `--job-title` (or `-j`): Simulates providing a specific job title context. The service will use overrides defined for this job title in `config.js`.
+-   `--apify-overrides` (or `-o`): Provides a JSON string for runtime overrides. This JSON string should be an object where keys are actor IDs and values are the input objects for those actors.
+
+**Example Usages:**
+
+1.  **No overrides (uses default inputs for all configured actors):**
+    ```bash
+    node scripts/test-apis.js
+    ```
+
+2.  **Simulating a job title to apply its specific overrides:**
+    This will use the `overridesByJobTitle` for "M&A Analyst" from `config.js` for the "apify/google-search-scraper" actor, if defined.
+    ```bash
+    node scripts/test-apis.js --job-title "M&A Analyst"
+    ```
+
+3.  **Providing runtime overrides for a specific actor:**
+    This example overrides `resultsPerPage` and `maxPagesPerQuery` for the "apify/google-search-scraper" actor. The JSON string must be properly quoted.
+    ```bash
+    node scripts/test-apis.js --apify-overrides '{"apify/google-search-scraper": {"resultsPerPage": 5, "maxPagesPerQuery": 1}}'
+    ```
+    *(Note: In some shells like bash, you might need to ensure the JSON string is correctly escaped or quoted to be passed as a single argument, e.g., using single quotes around the JSON object).*
+
+4.  **Combining job title and runtime overrides:**
+    Runtime overrides take precedence. If "M&A Analyst" has a default `resultsPerPage` of 25, the following command will run the "apify/google-search-scraper" with `resultsPerPage: 5` because the runtime override is dominant.
+    ```bash
+    node scripts/test-apis.js --job-title "M&A Analyst" --apify-overrides '{"apify/google-search-scraper": {"resultsPerPage": 5}}'
+    ```
+
+These tools allow for thorough testing and fine-tuning of your Apify actor inputs to match diverse scraping requirements.
+
 ## Email Compliance Setup
 
 This application includes comprehensive email compliance features to ensure deliverability and legal compliance. Follow these steps to configure email compliance properly.
