@@ -169,12 +169,6 @@ module.exports = (serpApiClient, playwrightScraper, apifyService, rateLimiter, c
 
           if (actorResults && actorResults.length > 0) {
             results.byTitle[jobTitle] = actorResults.length;
-              maxPagesPerQuery: options.pages || 3
-            }
-          });
-
-          if (actorResults && actorResults.length > 0) {
-            results.byTitle[jobTitle] = actorResults.length;
             results.total += actorResults.length;
             
             // Process and save results to database

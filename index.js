@@ -117,6 +117,8 @@ function setupRoutes() {
       status: 'running',
       endpoints: {
         health: '/health',
+        jobs: 'GET /api/jobs',
+        updateJob: 'PUT /api/jobs/:id',
         scrape: 'POST /trigger/scrape',
         enrich: 'POST /trigger/enrich',
         outreach: 'POST /trigger/outreach',
@@ -304,6 +306,74 @@ function setupRoutes() {
     } catch (error) {
       logger.error('Error processing SendGrid webhook events', { error: error.message, stack: error.stack });
       return res.status(500).json({ error: 'Error processing webhook events' });
+    }
+  });
+
+  // Jobs API endpoints
+  app.get('/api/jobs', async (req, res) => {
+    if (!logger) {
+      return res.status(503).json({ error: 'Logger not available' });
+    }
+    
+    try {
+      const db = require('./src/db');
+      const limit = parseInt(req.query.limit) || 100;
+      const offset = parseInt(req.query.offset) || 0;
+      const email_status = req.query.email_status;
+      
+      let query = 'SELECT * FROM jobs';
+      let params = [];
+      
+      if (email_status) {
+        query += ' WHERE email_status = $1';
+        params.push(email_status);
+      }
+      
+      query += ' ORDER BY collected_at DESC LIMIT $' + (params.length + 1) + ' OFFSET $' + (params.length + 2);
+      params.push(limit, offset);
+      
+      const result = await db.query(query, params);
+      
+      res.json({
+        jobs: result.rows,
+        total: result.rows.length,
+        limit,
+        offset
+      });
+    } catch (error) {
+      logger.error('Error fetching jobs', { error: error.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  app.put('/api/jobs/:id', async (req, res) => {
+    if (!logger) {
+      return res.status(503).json({ error: 'Logger not available' });
+    }
+    
+    try {
+      const db = require('./src/db');
+      const jobId = req.params.id;
+      const { email_status } = req.body;
+      
+      if (!email_status) {
+        return res.status(400).json({ error: 'email_status is required' });
+      }
+      
+      const query = 'UPDATE jobs SET email_status = $1, updated_at = NOW() WHERE id = $2 RETURNING *';
+      const result = await db.query(query, [email_status, jobId]);
+      
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Job not found' });
+      }
+      
+      res.json({
+        success: true,
+        job: result.rows[0]
+      });
+    } catch (error) {
+      logger.error('Error updating job', { error: error.message });
+      res.status(500).json({ error: 'Internal server error' });
     }
   });
 
